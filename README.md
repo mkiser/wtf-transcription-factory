@@ -35,11 +35,11 @@ Open **PowerShell** and paste:
 irm https://raw.githubusercontent.com/mkiser/wtf-transcription-factory/main/install.ps1 | iex
 ```
 
-Either installer sets everything up and creates a **“WTF Transcription Factory”**
-app — launch it from **Launchpad / Spotlight** (macOS) or the **Start Menu /
-Desktop** (Windows). **No security warnings:** the launcher is built on your own
-machine, so it's never quarantined, and a script piped into `bash`/`iex` isn't
-quarantined either.
+Either installer sets everything up. On **macOS** it puts a **“WTF Transcription
+Factory”** launcher on your **Desktop** — double-click it to run, and close its
+window to stop. On **Windows** it adds **Start Menu / Desktop** shortcuts. **No
+security warnings:** the launcher is built on your own machine, so it's never
+quarantined, and a script piped into `bash`/`iex` isn't quarantined either.
 
 The only prerequisite is **Python**. If it's missing, the installer opens the
 download page and tells you what to do, then you re-run the one line.
