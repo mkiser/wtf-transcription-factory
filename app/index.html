@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WTF Transcription Factory</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --line:#272c37; --text:#e7e9ee;
+    --muted:#9aa3b2; --accent:#6ea8fe; --accent2:#7ee0a8; --err:#ff7a7a; --warn:#ffd166;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:23px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;margin-bottom:18px}
+  label{display:block;font-size:13px;color:var(--muted);margin:0 0 6px}
+  input[type=url],select{width:100%;background:#0c0e13;border:1px solid var(--line);
+       color:var(--text);border-radius:8px;padding:13px 13px;font-size:16px}
+  details{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+  summary{cursor:pointer;color:var(--muted);font-size:13px;list-style:none;user-select:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸ ";color:var(--accent)}
+  details[open] summary::before{content:"▾ "}
+  .row{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px}
+  .row > div{flex:1;min-width:150px}
+  .opts{display:flex;gap:18px;align-items:center;margin-top:14px;color:var(--muted);font-size:14px;flex-wrap:wrap}
+  .opts label{display:flex;align-items:center;gap:7px;margin:0;cursor:pointer}
+  button{margin-top:20px;background:var(--accent);color:#08203f;border:0;border-radius:8px;
+       padding:14px 22px;font-size:16px;font-weight:600;cursor:pointer;width:100%}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .status{font-size:14px;color:var(--muted);margin:14px 2px 0;min-height:18px}
+  .status.err{color:var(--err)}
+  .log{background:#0a0c10;border:1px solid var(--line);border-radius:8px;padding:12px;
+       font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:#8b93a3;
+       max-height:120px;overflow:auto;white-space:pre-wrap;display:none;margin-bottom:14px}
+
+  /* transcript */
+  #tarea{display:none}
+  .ttoolbar{display:flex;align-items:center;gap:16px;margin-bottom:12px;color:var(--muted);font-size:13px}
+  .ttoolbar label{display:flex;align-items:center;gap:7px;margin:0;cursor:pointer}
+  .ttoolbar .grow{flex:1}
+  .ttoolbar button{width:auto;margin:0;padding:7px 13px;font-size:13px;font-weight:500;
+       background:transparent;color:var(--accent2);border:1px solid var(--line)}
+  #twrap{background:#0a0c10;border:1px solid var(--line);border-radius:8px;padding:18px 20px;
+       max-height:460px;overflow:auto}
+  #tbody .para{margin:0 0 14px;line-height:1.7}
+  #tbody .ts{color:var(--muted);font:12px ui-monospace,Menlo,monospace;margin-right:8px;user-select:none}
+  #tbody.hide-ts .ts{display:none}
+  #curline{color:#7e8696;line-height:1.7}
+
+  .actions{display:none;gap:10px;margin-top:16px;flex-wrap:wrap}
+  .actions a,.actions button{color:var(--accent2);text-decoration:none;border:1px solid var(--line);
+       padding:10px 15px;border-radius:8px;font-size:14px;background:transparent;width:auto;margin:0;font-weight:500;cursor:pointer}
+  .legend{color:#6b7280;font-size:12px;margin-top:10px;display:none}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid #3a4150;
+       border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite;vertical-align:-1px;margin-right:8px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .hint{color:#6b7280;font-size:12px;margin-top:7px}
+  .disclaimer{color:#5c6474;font-size:11px;line-height:1.55;text-align:center;margin:30px auto 0;max-width:660px}
+  .disclaimer a{color:#7a8395}
+  #guard{display:none;text-align:center;padding:48px 24px}
+  #guard h2{color:var(--warn);font-size:20px}
+  #guard p{color:var(--muted);max-width:520px;margin:10px auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="guard" class="card">
+    <h2>⚠️ Almost — start the app first</h2>
+    <p>It looks like you opened this page file directly. This page only works
+       while the app is running.</p>
+    <p><b>Close this tab</b>, then open the <b>WTF Transcription Factory</b> app
+       (or re-run the installer). Your browser will reopen this page automatically.</p>
+  </div>
+
+  <div id="main">
+    <h1>🎙️ WTF Transcription Factory</h1>
+    <p class="sub">Paste a video or podcast link and press the button. It finds the source, pulls the audio, and writes a transcript — all on this computer.</p>
+
+    <div class="card">
+      <form id="form">
+        <label for="url">Video link</label>
+        <input id="url" type="url" placeholder="https://…  (paste the page the video is on)" required autofocus>
+
+        <details>
+          <summary>Options (optional)</summary>
+          <div class="row">
+            <div>
+              <label for="model">Quality / speed</label>
+              <select id="model">
+                <option value="tiny.en">Fastest — roughest (best for long videos)</option>
+                <option value="base.en">Fast</option>
+                <option value="small.en" selected>Balanced — recommended</option>
+                <option value="medium.en">High quality — slower</option>
+                <option value="large-v3">Best — slowest (any language)</option>
+              </select>
+            </div>
+            <div>
+              <label for="language">Language</label>
+              <select id="language">
+                <option value="en" selected>English</option>
+                <option value="auto">Auto-detect</option>
+              </select>
+            </div>
+          </div>
+          <div class="opts">
+            <label><input id="srt" type="checkbox" checked> Also save subtitles (.srt)</label>
+            <label><input id="keep" type="checkbox"> Keep the audio file</label>
+          </div>
+          <div class="hint">Speed runs on your computer's processor. Rough guide per 1 hour of audio: Fastest ≈ a few min, Balanced ≈ 10–20 min, Best ≈ much longer. For multi-hour videos, pick Fastest or Balanced.</div>
+        </details>
+
+        <button id="go" type="submit">Transcribe</button>
+      </form>
+      <div id="status" class="status"></div>
+      <div class="hint">The first transcription downloads the speech model once (a few minutes). After that it's quicker.</div>
+    </div>
+
+    <div id="log" class="log"></div>
+
+    <div id="tarea" class="card">
+      <div class="ttoolbar">
+        <strong style="color:var(--text)">Transcript</strong>
+        <label><input id="tsToggle" type="checkbox" checked> Timestamps</label>
+        <span class="grow"></span>
+        <button id="copyAll" type="button">Copy all</button>
+      </div>
+      <div id="twrap">
+        <div id="tbody"></div>
+        <div id="curline"></div>
+      </div>
+      <div class="actions" id="actions"></div>
+      <div class="legend" id="legend">
+        <b>Readable</b> = paragraphs, no timestamps (best for reading).
+        <b>With timestamps</b> = paragraphs, one time per paragraph (jump around the video).
+        <b>Subtitles (.srt)</b> = for captioning the video.
+      </div>
+    </div>
+
+    <p class="disclaimer">
+      Downloads and transcribes only the URLs you provide. You are responsible for
+      complying with copyright and each site's terms of service. Provided “as is”,
+      without warranty — see LICENSE &amp; DISCLAIMER. Not affiliated with any platform.
+    </p>
+  </div>
+</div>
+
+<script>
+if (location.protocol === "file:") {
+  document.getElementById("main").style.display = "none";
+  document.getElementById("guard").style.display = "block";
+}
+
+const $ = s => document.querySelector(s);
+const form = $("#form"), goBtn = $("#go");
+const statusEl = $("#status"), logEl = $("#log");
+const tarea = $("#tarea"), tBody = $("#tbody"), tWrap = $("#twrap"), curLine = $("#curline");
+const actEl = $("#actions"), legend = $("#legend");
+let es = null, curWords = [], curStart = null;
+
+function setStatus(t, isErr){ statusEl.className = "status" + (isErr ? " err" : ""); statusEl.innerHTML = t; }
+function log(line){ logEl.style.display="block"; logEl.textContent += line + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+
+function hms(sec){ sec=Math.floor(sec||0); const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;
+  return String(h).padStart(2,'0')+":"+String(m).padStart(2,'0')+":"+String(s).padStart(2,'0'); }
+
+function renderCurrent(){ curLine.textContent = curWords.length ? ("["+hms(curStart)+"] "+curWords.join(" ")) : ""; }
+function flushPara(){
+  if(!curWords.length) return;
+  const p=document.createElement("p"); p.className="para";
+  const ts=document.createElement("span"); ts.className="ts"; ts.textContent="["+hms(curStart)+"]";
+  p.appendChild(ts); p.appendChild(document.createTextNode(curWords.join(" ")));
+  tBody.appendChild(p);
+  curWords=[]; curStart=null; renderCurrent();
+  tWrap.scrollTop = tWrap.scrollHeight;
+}
+function addSeg(text, start){
+  tarea.style.display="block";
+  if(curStart===null) curStart = (start==null?0:start);
+  curWords.push(text);
+  const joined = curWords.join(" ");
+  renderCurrent();
+  tWrap.scrollTop = tWrap.scrollHeight;
+  if(joined.length>=250 && /[.?!]["')\]]?$/.test(joined)) flushPara();
+}
+
+$("#tsToggle").addEventListener("change", e => {
+  tBody.classList.toggle("hide-ts", !e.target.checked);
+});
+$("#copyAll").addEventListener("click", () => {
+  const text = Array.from(tBody.querySelectorAll(".para"))
+    .map(p => p.childNodes[1] ? p.childNodes[1].textContent.trim() : p.textContent.trim())
+    .join("\n\n");
+  navigator.clipboard.writeText(text).then(()=>{ const b=$("#copyAll"); b.textContent="Copied ✓"; setTimeout(()=>b.textContent="Copy all",1500); });
+});
+
+if (form) form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (es) es.close();
+  logEl.textContent=""; logEl.style.display="none";
+  tBody.innerHTML=""; curWords=[]; curStart=null; renderCurrent();
+  tarea.style.display="none"; actEl.style.display="none"; actEl.innerHTML=""; legend.style.display="none";
+  goBtn.disabled = true; goBtn.textContent = "Working…";
+  setStatus('<span class="spin"></span>Starting…');
+
+  const payload = {
+    url: $("#url").value.trim(), model: $("#model").value,
+    language: $("#language").value, srt: $("#srt").checked, keep_audio: $("#keep").checked,
+  };
+
+  let jobId;
+  try {
+    const r = await fetch("/api/jobs", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Failed to start");
+    jobId = j.job_id;
+  } catch (err) {
+    setStatus("Error: " + err.message, true); goBtn.disabled=false; goBtn.textContent="Transcribe"; return;
+  }
+
+  es = new EventSource(`/api/jobs/${jobId}/events`);
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.kind === "status")        setStatus('<span class="spin"></span>' + ev.text);
+    else if (ev.kind === "download") log(ev.text);
+    else if (ev.kind === "segment")  addSeg(ev.text, ev.start);
+    else if (ev.kind === "done") {
+      flushPara();
+      setStatus("✅ " + ev.text);
+      es.close(); goBtn.disabled=false; goBtn.textContent="Transcribe";
+      actEl.style.display="flex"; legend.style.display="block";
+      actEl.innerHTML =
+        `<a href="/api/jobs/${jobId}/download/transcript.txt" download>⬇︎ Readable (.txt)</a>` +
+        `<a href="/api/jobs/${jobId}/download/transcript_timestamps.txt" download>⬇︎ With timestamps (.txt)</a>` +
+        ($("#srt").checked ? `<a href="/api/jobs/${jobId}/download/transcript.srt" download>⬇︎ Subtitles (.srt)</a>` : "") +
+        `<button id="reveal">📂 Open folder</button>`;
+      $("#reveal").onclick = () => fetch(`/api/jobs/${jobId}/reveal`, {method:"POST"});
+    }
+    else if (ev.kind === "error") { setStatus("❌ " + ev.text, true); es.close(); goBtn.disabled=false; goBtn.textContent="Transcribe"; }
+  };
+  es.onerror = () => {};
+});
+</script>
+</body>
+</html>
