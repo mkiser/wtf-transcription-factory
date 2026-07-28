@@ -2,9 +2,10 @@
 
 _Paste a video or podcast link — find out WTF was said._
 
-A tiny local app: paste a URL into a web page, and it identifies the video/audio,
-downloads it, and transcribes it with a Whisper speech-to-text model — entirely
-on your own machine. Nothing is uploaded to any third-party service.
+A tiny local app: paste a URL into a web page, and it identifies the video/audio
+and pulls it down. Keep the audio as an MP3, transcribe it with a Whisper
+speech-to-text model, or both — entirely on your own machine. Nothing is
+uploaded to any third-party service.
 
 Under the hood it wraps three open-source tools:
 
@@ -44,10 +45,29 @@ quarantined, and a script piped into `bash`/`iex` isn't quarantined either.
 The only prerequisite is **Python**. If it's missing, the installer opens the
 download page and tells you what to do, then you re-run the one line.
 
-Then paste a link → **Transcribe**. The text streams in live; when done you get
-**Download transcript**, **Download .srt**, and **Open folder** buttons.
+Then paste a link and pick what you want:
 
-**Update** later by re-running the one-liner. **Uninstall:** delete the app
+| Mode | What you get |
+|------|--------------|
+| **Transcript** | A transcript. The audio is fetched, used, and deleted. |
+| **Audio only** | Just the MP3 — stereo, ~190 kbps, saved to `audio/`. No speech model is downloaded, so it finishes as fast as the download. |
+| **Both** | The MP3 *and* a transcript, from the same file. |
+
+The text streams in live; when it's done you get download buttons and **Open folder**.
+
+**YouTube needs a JavaScript runtime.** YouTube requires solving a signature
+challenge, which needs **Node.js** ([nodejs.org](https://nodejs.org)) or
+**Deno**. The app finds one automatically — including Homebrew and nvm installs
+that aren't on the launcher's `PATH`. Without one, YouTube reports perfectly
+good videos as *"This video is not available"*; the app will tell you so rather
+than blaming your link. Other sites are unaffected.
+
+**Staying current:** yt-dlp is in a constant arms race with the sites it
+supports, so the app quietly refreshes it in the background at most once a day.
+If you're offline it keeps the copy it has and tries again next time. The other
+components are left alone so a working install doesn't change under you.
+
+**Update** the app itself by re-running the one-liner. **Uninstall:** delete the app
 shortcut and the app folder (`~/.wtf-transcription-factory` on macOS/Linux, or
 `%LOCALAPPDATA%\WTF Transcription Factory` on Windows).
 
@@ -77,6 +97,12 @@ paragraphs and gives you: `transcript.txt` (readable, no timestamps),
 (subtitles). On the page you can toggle timestamps and hit **Copy all**. Each
 run is saved in its own dated folder under `transcripts/`; old runs auto-delete
 after 30 days (`RETAIN_DAYS` to change).
+
+Audio saved by **Audio only** goes to `audio/` as a single dated MP3 and is
+**never auto-deleted** — only `transcripts/` is swept. Kept audio is encoded for
+listening (stereo, ~190 kbps, roughly 90 MB per hour) rather than the mono 16 kHz
+the speech model needs; in **Both** mode Whisper reads that same file and
+resamples internally, so there's only ever one copy.
 
 ---
 

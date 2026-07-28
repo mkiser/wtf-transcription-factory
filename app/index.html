@@ -28,6 +28,12 @@
   .row > div{flex:1;min-width:150px}
   .opts{display:flex;gap:18px;align-items:center;margin-top:14px;color:var(--muted);font-size:14px;flex-wrap:wrap}
   .opts label{display:flex;align-items:center;gap:7px;margin:0;cursor:pointer}
+  .mlabel{margin-top:18px}
+  .modes{display:flex;gap:8px;margin-top:6px}
+  .modes button{flex:1;margin:0;padding:11px 8px;font-size:14px;font-weight:500;
+       background:#0c0e13;color:var(--muted);border:1px solid var(--line)}
+  .modes button[aria-pressed="true"]{background:var(--accent);color:#08203f;
+       border-color:var(--accent);font-weight:600}
   button{margin-top:20px;background:var(--accent);color:#08203f;border:0;border-radius:8px;
        padding:14px 22px;font-size:16px;font-weight:600;cursor:pointer;width:100%}
   button:disabled{opacity:.5;cursor:not-allowed}
@@ -79,14 +85,21 @@
 
   <div id="main">
     <h1>🎙️ WTF Transcription Factory</h1>
-    <p class="sub">Paste a video or podcast link and press the button. It finds the source, pulls the audio, and writes a transcript — all on this computer.</p>
+    <p class="sub">Paste a video or podcast link and press the button. Save just the audio, write a transcript, or both — all on this computer.</p>
 
     <div class="card">
       <form id="form">
         <label for="url">Video link</label>
         <input id="url" type="url" placeholder="https://…  (paste the page the video is on)" required autofocus>
 
-        <details>
+        <label class="mlabel">What do you want?</label>
+        <div class="modes" id="modes">
+          <button type="button" data-mode="transcript" aria-pressed="true">Transcript</button>
+          <button type="button" data-mode="audio" aria-pressed="false">Audio only</button>
+          <button type="button" data-mode="both" aria-pressed="false">Both</button>
+        </div>
+
+        <details id="opts">
           <summary>Options (optional)</summary>
           <div class="row">
             <div>
@@ -109,7 +122,6 @@
           </div>
           <div class="opts">
             <label><input id="srt" type="checkbox" checked> Also save subtitles (.srt)</label>
-            <label><input id="keep" type="checkbox"> Keep the audio file</label>
           </div>
           <div class="hint">Speed runs on your computer's processor. Rough guide per 1 hour of audio: Fastest ≈ a few min, Balanced ≈ 10–20 min, Best ≈ much longer. For multi-hour videos, pick Fastest or Balanced.</div>
         </details>
@@ -117,7 +129,7 @@
         <button id="go" type="submit">Transcribe</button>
       </form>
       <div id="status" class="status"></div>
-      <div class="hint">The first transcription downloads the speech model once (a few minutes). After that it's quicker.</div>
+      <div class="hint" id="modelHint">The first transcription downloads the speech model once (a few minutes). After that it's quicker.</div>
     </div>
 
     <div id="log" class="log"></div>
@@ -161,6 +173,23 @@ const statusEl = $("#status"), logEl = $("#log");
 const tarea = $("#tarea"), tBody = $("#tbody"), tWrap = $("#twrap"), curLine = $("#curline");
 const actEl = $("#actions"), legend = $("#legend");
 let es = null, curWords = [], curStart = null;
+
+const MODE_BTN = {transcript:"Transcribe", audio:"Download audio", both:"Transcribe + save audio"};
+const optsEl = $("#opts"), modelHint = $("#modelHint");
+let mode = "transcript";
+
+function setMode(m){
+  mode = m;
+  document.querySelectorAll("#modes button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  const audioOnly = (m === "audio");          // nothing in Options applies
+  optsEl.style.display = audioOnly ? "none" : "";
+  modelHint.style.display = audioOnly ? "none" : "";
+  goBtn.textContent = MODE_BTN[m];
+}
+document.querySelectorAll("#modes button").forEach(b =>
+  b.addEventListener("click", () => setMode(b.dataset.mode)));
+setMode("transcript");
 
 function setStatus(t, isErr){ statusEl.className = "status" + (isErr ? " err" : ""); statusEl.innerHTML = t; }
 function log(line){ logEl.style.display="block"; logEl.textContent += line + "\n"; logEl.scrollTop = logEl.scrollHeight; }
@@ -208,8 +237,8 @@ if (form) form.addEventListener("submit", async (e) => {
   setStatus('<span class="spin"></span>Starting…');
 
   const payload = {
-    url: $("#url").value.trim(), model: $("#model").value,
-    language: $("#language").value, srt: $("#srt").checked, keep_audio: $("#keep").checked,
+    url: $("#url").value.trim(), mode,
+    model: $("#model").value, language: $("#language").value, srt: $("#srt").checked,
   };
 
   let jobId;
@@ -219,7 +248,7 @@ if (form) form.addEventListener("submit", async (e) => {
     if (!r.ok) throw new Error(j.error || "Failed to start");
     jobId = j.job_id;
   } catch (err) {
-    setStatus("Error: " + err.message, true); goBtn.disabled=false; goBtn.textContent="Transcribe"; return;
+    setStatus("Error: " + err.message, true); goBtn.disabled=false; goBtn.textContent=MODE_BTN[mode]; return;
   }
 
   es = new EventSource(`/api/jobs/${jobId}/events`);
@@ -231,16 +260,21 @@ if (form) form.addEventListener("submit", async (e) => {
     else if (ev.kind === "done") {
       flushPara();
       setStatus("✅ " + ev.text);
-      es.close(); goBtn.disabled=false; goBtn.textContent="Transcribe";
-      actEl.style.display="flex"; legend.style.display="block";
-      actEl.innerHTML =
-        `<a href="/api/jobs/${jobId}/download/transcript.txt" download>⬇︎ Readable (.txt)</a>` +
-        `<a href="/api/jobs/${jobId}/download/transcript_timestamps.txt" download>⬇︎ With timestamps (.txt)</a>` +
-        ($("#srt").checked ? `<a href="/api/jobs/${jobId}/download/transcript.srt" download>⬇︎ Subtitles (.srt)</a>` : "") +
-        `<button id="reveal">📂 Open folder</button>`;
+      es.close(); goBtn.disabled=false; goBtn.textContent=MODE_BTN[mode];
+      actEl.style.display="flex";
+      const links = [];
+      if (mode !== "audio") {
+        links.push(`<a href="/api/jobs/${jobId}/download/txt" download>⬇︎ Readable (.txt)</a>`);
+        links.push(`<a href="/api/jobs/${jobId}/download/ts" download>⬇︎ With timestamps (.txt)</a>`);
+        if ($("#srt").checked) links.push(`<a href="/api/jobs/${jobId}/download/srt" download>⬇︎ Subtitles (.srt)</a>`);
+        legend.style.display="block";
+      }
+      if (mode !== "transcript") links.push(`<a href="/api/jobs/${jobId}/download/audio" download>⬇︎ Download MP3</a>`);
+      links.push(`<button id="reveal">📂 Open folder</button>`);
+      actEl.innerHTML = links.join("");
       $("#reveal").onclick = () => fetch(`/api/jobs/${jobId}/reveal`, {method:"POST"});
     }
-    else if (ev.kind === "error") { setStatus("❌ " + ev.text, true); es.close(); goBtn.disabled=false; goBtn.textContent="Transcribe"; }
+    else if (ev.kind === "error") { setStatus("❌ " + ev.text, true); es.close(); goBtn.disabled=false; goBtn.textContent=MODE_BTN[mode]; }
   };
   es.onerror = () => {};
 });

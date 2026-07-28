@@ -34,14 +34,34 @@ BASE = Path(__file__).resolve().parent          # the app/ folder
 PKG = BASE.parent                               # the package root
 OUT = PKG / "transcripts"                       # output lives at the top level
 OUT.mkdir(exist_ok=True)
+AUDIO_OUT = PKG / "audio"                       # saved audio lives beside it
+# AUDIO_OUT is created on first use, so people who never save audio never get
+# an empty folder. It is deliberately outside the RETAIN_DAYS sweep below.
+
+MODES = ("transcript", "audio", "both")
 
 # Auto-delete run folders older than this many days (set to 0 to keep forever).
 RETAIN_DAYS = int(os.environ.get("RETAIN_DAYS", "30"))
+
+# yt-dlp is in a constant arms race with the sites it supports, so a stale copy
+# is the most common cause of "couldn't download that link". Refresh it at most
+# once a day, in the background, and never let a failure block the app.
+UPDATE_STAMP = PKG / ".last-update"
+UPDATE_INTERVAL = 86400
 
 
 def sanitize(name, maxlen=80):
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name)).strip("._-")
     return name[:maxlen] or "transcript"
+
+
+def unique_path(path: Path) -> Path:
+    """`path`, or the same name with a _2/_3 suffix if it's already taken."""
+    i, cand = 2, path
+    while cand.exists():
+        cand = path.with_name(f"{path.stem}_{i}{path.suffix}")
+        i += 1
+    return cand
 
 
 def cleanup_old_runs():
@@ -64,6 +84,9 @@ work_q: "queue.Queue" = queue.Queue()
 _models = {}
 _models_lock = threading.Lock()
 _ffmpeg_dir = None
+# Set unless a background yt-dlp upgrade is actually in flight.
+_ytdlp_ready = threading.Event()
+_ytdlp_ready.set()
 
 
 # --------------------------------------------------------------------------- #
@@ -90,6 +113,37 @@ def ensure_ffmpeg_dir():
         print(f"  Could not auto-provision ffmpeg: {e}")
     _ffmpeg_dir = ""
     return None
+
+
+def maybe_update_ytdlp():
+    """Once a day, quietly upgrade yt-dlp in this app's own environment.
+
+    Runs in the background so launching stays instant, and is deliberately
+    best-effort: an offline machine simply keeps the version it has and tries
+    again next launch. `_ytdlp_ready` lets a download that starts immediately
+    wait for the upgrade instead of racing it.
+    """
+    try:
+        if UPDATE_STAMP.exists() and \
+                time.time() - UPDATE_STAMP.stat().st_mtime < UPDATE_INTERVAL:
+            return
+    except OSError:
+        return
+
+    def run():
+        try:
+            r = subprocess.run([sys.executable, "-m", "pip", "install",
+                                "--quiet", "--upgrade", "yt-dlp"],
+                               capture_output=True, timeout=180)
+            if r.returncode == 0:
+                UPDATE_STAMP.touch()          # only on success, so retry if offline
+        except Exception:                     # noqa: BLE001
+            pass
+        finally:
+            _ytdlp_ready.set()
+
+    _ytdlp_ready.clear()
+    threading.Thread(target=run, daemon=True).start()
 
 
 def get_model(name):
@@ -160,25 +214,75 @@ _MODEL_SIZE = {
 # --------------------------------------------------------------------------- #
 # Pipeline
 # --------------------------------------------------------------------------- #
-def run_job(job):
-    job["status"] = "running"
-    jobdir = OUT / job["id"]
-    jobdir.mkdir(parents=True, exist_ok=True)
-    job["dir"] = str(jobdir)
+def find_js_runtime():
+    """Locate a JavaScript runtime, returning (name, path) or (None, None).
 
-    emit(job, "status", "Finding the video and downloading its audio…")
-    ffdir = ensure_ffmpeg_dir()
-    template = str(jobdir / "%(title).150B.%(ext)s")
-    cmd = [
-        "yt-dlp",
-        "-f", "bestaudio/worst",
-        "-x", "--audio-format", "mp3",
-        "--postprocessor-args", "ffmpeg:-ac 1 -ar 16000",
-        "--no-playlist", "--restrict-filenames", "--newline",
-        "-o", template, job["url"],
-    ]
+    Checks PATH first, then the usual install locations: the double-click
+    launcher runs a non-interactive shell, so PATH there is missing the
+    Homebrew and nvm entries that work fine in a terminal.
+    """
+    for rt in ("deno", "node", "bun"):
+        found = shutil.which(rt)
+        if found:
+            return rt, found
+
+    spots = [("deno", Path.home() / ".deno/bin/deno"),
+             ("bun", Path.home() / ".bun/bin/bun")]
+    for base in ("/opt/homebrew/bin", "/usr/local/bin"):
+        spots += [(rt, Path(base) / rt) for rt in ("deno", "node", "bun")]
+    for rt, p in spots:
+        if p.exists():
+            return rt, str(p)
+
+    # nvm keeps versioned installs well outside any non-interactive PATH
+    def ver(p):
+        return tuple(int(x) for x in re.findall(r"\d+", p.parent.parent.name)[:3])
+    nvm = sorted((Path.home() / ".nvm/versions/node").glob("*/bin/node"), key=ver)
+    if nvm:
+        return "node", str(nvm[-1])
+    return None, None
+
+
+def js_runtime_args():
+    """YouTube now needs a JS runtime to solve its signature challenges. Without
+    one, extraction falls back to a client that reports perfectly good videos as
+    "not available" — so this is the difference between working and not.
+
+    The challenge-solver script ships separately from the runtime; yt-dlp fetches
+    and caches it on demand via --remote-components.
+    """
+    rt, path = find_js_runtime()
+    if not rt:
+        return []
+    return ["--js-runtimes", f"{rt}:{path}", "--remote-components", "ejs:github"]
+
+
+def ytdlp_cmd(job, jobdir, ffdir):
+    """Build the download command. Encoding depends on whether we keep the audio:
+    a transcript-only run makes the small mono 16 kHz file Whisper wants and then
+    deletes it; a run that keeps the audio makes something worth listening to."""
+    # Run yt-dlp as a module, not as a bare command: the launcher doesn't put
+    # this venv's bin/ on PATH, so "yt-dlp" would find a stale system copy or
+    # nothing at all.
+    cmd = [sys.executable, "-m", "yt_dlp",
+           "-f", "bestaudio/worst", "-x", "--audio-format", "mp3"]
+    if job["mode"] == "transcript":
+        cmd += ["--postprocessor-args", "ffmpeg:-ac 1 -ar 16000"]
+    else:
+        cmd += ["--audio-quality", "2"]      # LAME VBR ~190 kbps, stereo kept
+    cmd += js_runtime_args()
+    cmd += ["--no-playlist", "--restrict-filenames", "--newline",
+            "-o", str(jobdir / "%(title).150B.%(ext)s"), job["url"]]
     if ffdir:
         cmd += ["--ffmpeg-location", ffdir]
+    return cmd
+
+
+def download_audio(job, jobdir):
+    """Fetch the media's audio into jobdir and return the resulting MP3."""
+    emit(job, "status", "Finding the video and downloading its audio…")
+    _ytdlp_ready.wait(timeout=180)      # don't race a background yt-dlp upgrade
+    cmd = ytdlp_cmd(job, jobdir, ensure_ffmpeg_dir())
 
     recent = deque(maxlen=12)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
@@ -194,23 +298,51 @@ def run_job(job):
     proc.wait()
     if proc.returncode != 0:
         tail = " | ".join(recent).lower()
-        hint = " (Audio tool problem — try installing ffmpeg, or re-launch.)" if "ffmpeg" in tail else ""
+        if "ffmpeg" in tail:
+            hint = " (Audio tool problem — try installing ffmpeg, or re-launch.)"
+        elif not js_runtime_args() and ("javascript runtime" in tail
+                                        or "not available" in tail):
+            # Don't blame the URL for this — the video is usually fine.
+            hint = (" YouTube needs a JavaScript runtime to unlock its video "
+                    "formats, and reports videos as unavailable without one. "
+                    "Install Node.js (nodejs.org) or Deno, then re-launch.")
+        else:
+            hint = ""
         raise RuntimeError("Couldn't download from that link. Check that it's the "
                            "correct video page URL." + hint)
 
     mp3s = sorted(jobdir.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
     if not mp3s:
         raise RuntimeError("Download finished but no audio file was produced.")
-    audio = mp3s[-1]
+    return mp3s[-1]
+
+
+def run_job(job):
+    job["status"] = "running"
+    jobdir = OUT / job["id"]
+    jobdir.mkdir(parents=True, exist_ok=True)
+    job["dir"] = str(jobdir)
+
+    audio = download_audio(job, jobdir)
+    nice = f"{sanitize(audio.stem)}_{time.strftime('%Y-%m-%d')}"
+
+    if job["mode"] == "audio":
+        # Nothing to transcribe: move the one file out and drop the scratch folder.
+        AUDIO_OUT.mkdir(parents=True, exist_ok=True)
+        final = unique_path(AUDIO_OUT / f"{nice}.mp3")
+        shutil.move(str(audio), str(final))
+        shutil.rmtree(jobdir, ignore_errors=True)
+        mb = final.stat().st_size / 1e6
+        job["dir"] = str(AUDIO_OUT)
+        job["audio_path"] = str(final)
+        job["result"] = {"audio": final.name, "mb": round(mb, 1)}
+        job["status"] = "done"
+        emit(job, "done", f"Audio saved — {final.name} ({mb:.0f} MB)")
+        return
 
     # Rename the run folder to a readable "<title>_<date>" (kept unique)
-    nice = f"{sanitize(audio.stem)}_{time.strftime('%Y-%m-%d')}"
-    target = OUT / nice
+    target = unique_path(OUT / nice)
     if target != jobdir:
-        i = 2
-        while target.exists():
-            target = OUT / f"{nice}_{i}"
-            i += 1
         try:
             jobdir.rename(target)
             jobdir = target
@@ -253,7 +385,9 @@ def run_job(job):
     if job["srt"]:
         (jobdir / "transcript.srt").write_text("\n".join(srt_blocks))
 
-    if not job["keep_audio"]:
+    if job["mode"] == "both":
+        job["audio_path"] = str(audio)
+    else:
         try:
             audio.unlink()
         except OSError:
@@ -262,6 +396,7 @@ def run_job(job):
     job["result"] = {"txt": "transcript.txt",
                      "ts": "transcript_timestamps.txt",
                      "srt": "transcript.srt" if job["srt"] else None,
+                     "audio": audio.name if job["mode"] == "both" else None,
                      "segments": n, "paragraphs": len(paras)}
     job["status"] = "done"
     emit(job, "done", f"All done — {n} lines transcribed.")
@@ -296,18 +431,25 @@ def create_job():
     url = (data.get("url") or "").strip()
     if not url:
         return jsonify({"error": "Please paste a video URL."}), 400
+    mode = data.get("mode")
+    if mode is None:
+        # A browser holding a cached copy of the old page still posts keep_audio.
+        mode = "both" if data.get("keep_audio") else "transcript"
+    if mode not in MODES:
+        return jsonify({"error": f"Unknown mode '{mode}'."}), 400
     job = {
         "id": uuid.uuid4().hex[:12],
         "url": url,
+        "mode": mode,
         "model": data.get("model", "small.en"),
         "language": data.get("language", "en"),
         "srt": bool(data.get("srt", True)),
-        "keep_audio": bool(data.get("keep_audio", False)),
         "status": "queued",
         "events": [],
         "listeners": set(),
         "result": None,
         "dir": None,
+        "audio_path": None,
     }
     cleanup_old_runs()
     with jobs_lock:
@@ -352,15 +494,27 @@ def job_events(jid):
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@app.route("/api/jobs/<jid>/download/<name>")
-def download(jid, name):
+_DOWNLOAD_KEYS = {"txt": "transcript.txt",
+                  "ts": "transcript_timestamps.txt",
+                  "srt": "transcript.srt"}
+
+
+@app.route("/api/jobs/<jid>/download/<key>")
+def download(jid, key):
+    # Audio filenames vary per video, so the URL carries a logical key and the
+    # path is resolved here — there is no user-controlled path segment at all.
     job = jobs.get(jid)
-    if not job or name not in ("transcript.txt", "transcript_timestamps.txt", "transcript.srt"):
+    if not job:
         abort(404)
-    p = Path(job.get("dir") or (OUT / jid)) / name
-    if not p.exists():
+    if key == "audio":
+        p = Path(job["audio_path"]) if job.get("audio_path") else None
+    elif key in _DOWNLOAD_KEYS:
+        p = Path(job.get("dir") or (OUT / jid)) / _DOWNLOAD_KEYS[key]
+    else:
         abort(404)
-    return send_file(p, as_attachment=True, download_name=name)
+    if p is None or not p.exists():
+        abort(404)
+    return send_file(p, as_attachment=True, download_name=p.name)
 
 
 @app.route("/api/jobs/<jid>/reveal", methods=["POST"])
@@ -396,6 +550,7 @@ if __name__ == "__main__":
     port = pick_port(int(os.environ.get("PORT", "8765")))
     url = f"http://127.0.0.1:{port}"
     cleanup_old_runs()
+    maybe_update_ytdlp()
     ensure_ffmpeg_dir()
     print(f"\n  WTF Transcription Factory is running →  {url}\n  (Close this window to stop.)\n")
     threading.Timer(1.2, lambda: webbrowser.open(url)).start()

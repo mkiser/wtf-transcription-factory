@@ -1,5 +1,7 @@
 app/.venv/
 transcripts/
+audio/
+.last-update
 __pycache__/
 *.pyc
 .DS_Store
