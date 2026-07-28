@@ -32,9 +32,25 @@ from flask import Flask, Response, abort, jsonify, request, send_file
 
 BASE = Path(__file__).resolve().parent          # the app/ folder
 PKG = BASE.parent                               # the package root
-OUT = PKG / "transcripts"                       # output lives at the top level
-OUT.mkdir(exist_ok=True)
-AUDIO_OUT = PKG / "audio"                       # saved audio lives beside it
+def output_root():
+    """Where the user's files go.
+
+    Deliberately NOT inside the app folder: that lives at ~/.wtf-transcription-
+    factory, which is hidden, absent from the Finder sidebar, and deleted on
+    uninstall — a bad home for a 90 MB MP3 you want to keep. Downloads is
+    visible, is where downloaded media belongs, and is never cloud-synced.
+    """
+    override = os.environ.get("WTF_OUTPUT_DIR")
+    if override:
+        return Path(override).expanduser()
+    downloads = Path.home() / "Downloads"
+    return (downloads if downloads.is_dir() else Path.home()) / "WTF Transcription Factory"
+
+
+OUT_ROOT = output_root()
+OUT = OUT_ROOT / "transcripts"
+OUT.mkdir(parents=True, exist_ok=True)
+AUDIO_OUT = OUT_ROOT / "audio"
 # AUDIO_OUT is created on first use, so people who never save audio never get
 # an empty folder. It is deliberately outside the RETAIN_DAYS sweep below.
 

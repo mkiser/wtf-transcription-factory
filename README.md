@@ -91,18 +91,27 @@ shortcut and the app folder (`~/.wtf-transcription-factory` on macOS/Linux, or
 
 ## Output files
 
+Everything lands in **`~/Downloads/WTF Transcription Factory/`** — a normal,
+visible folder, not buried inside the app:
+
+```
+~/Downloads/WTF Transcription Factory/
+├─ audio/         one dated MP3 per "Audio only" run
+└─ transcripts/   one dated folder per transcription run
+```
+
+Set `WTF_OUTPUT_DIR` to put them somewhere else.
+
 Whisper produces short caption-sized chunks; the app merges them into readable
 paragraphs and gives you: `transcript.txt` (readable, no timestamps),
 `transcript_timestamps.txt` (one timestamp per paragraph), and `transcript.srt`
-(subtitles). On the page you can toggle timestamps and hit **Copy all**. Each
-run is saved in its own dated folder under `transcripts/`; old runs auto-delete
-after 30 days (`RETAIN_DAYS` to change).
+(subtitles). On the page you can toggle timestamps and hit **Copy all**. Old
+transcript runs auto-delete after 30 days (`RETAIN_DAYS` to change).
 
-Audio saved by **Audio only** goes to `audio/` as a single dated MP3 and is
-**never auto-deleted** — only `transcripts/` is swept. Kept audio is encoded for
-listening (stereo, ~190 kbps, roughly 90 MB per hour) rather than the mono 16 kHz
-the speech model needs; in **Both** mode Whisper reads that same file and
-resamples internally, so there's only ever one copy.
+Saved audio is **never auto-deleted** — only `transcripts/` is swept. It's
+encoded for listening (stereo, ~190 kbps, roughly 90 MB per hour) rather than
+the mono 16 kHz the speech model needs; in **Both** mode Whisper reads that same
+file and resamples internally, so there's only ever one copy.
 
 ---
 
