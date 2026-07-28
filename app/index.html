@@ -17,8 +17,12 @@
   .sub{color:var(--muted);margin:0 0 24px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;margin-bottom:18px}
   label{display:block;font-size:13px;color:var(--muted);margin:0 0 6px}
-  input[type=url],select{width:100%;background:#0c0e13;border:1px solid var(--line);
+  input[type=url],select,textarea{width:100%;background:#0c0e13;border:1px solid var(--line);
        color:var(--text);border-radius:8px;padding:13px 13px;font-size:16px}
+  /* Looks exactly like the single-line input it replaces, but can hold a list:
+     browsers strip newlines when you paste multiline text into an <input>. */
+  textarea#url{display:block;font-family:inherit;line-height:1.5;resize:none;
+       overflow-y:auto;max-height:190px}
   details{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
   summary{cursor:pointer;color:var(--muted);font-size:13px;list-style:none;user-select:none}
   summary::-webkit-details-marker{display:none}
@@ -47,7 +51,7 @@
   #tarea{display:none}
   .ttoolbar{display:flex;align-items:center;gap:16px;margin-bottom:12px;color:var(--muted);font-size:13px}
   .ttoolbar label{display:flex;align-items:center;gap:7px;margin:0;cursor:pointer}
-  .ttoolbar .grow{flex:1}
+  .ttoolbar .grow,.qhead .grow{flex:1}
   .ttoolbar button{width:auto;margin:0;padding:7px 13px;font-size:13px;font-weight:500;
        background:transparent;color:var(--accent2);border:1px solid var(--line)}
   #twrap{background:#0a0c10;border:1px solid var(--line);border-radius:8px;padding:18px 20px;
@@ -55,6 +59,9 @@
   #tbody .para{margin:0 0 14px;line-height:1.7}
   #tbody .ts{color:var(--muted);font:12px ui-monospace,Menlo,monospace;margin-right:8px;user-select:none}
   #tbody.hide-ts .ts{display:none}
+  /* Audio-only runs produce no text, but still need their download links —
+     which live in this card. Show the card, drop the transcript furniture. */
+  #tarea.noText #twrap,#tarea.noText .ttoolbar label,#tarea.noText #copyAll{display:none}
   #curline{color:#7e8696;line-height:1.7}
 
   .actions{display:none;gap:10px;margin-top:16px;flex-wrap:wrap}
@@ -65,6 +72,29 @@
        border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite;vertical-align:-1px;margin-right:8px}
   @keyframes s{to{transform:rotate(360deg)}}
   .hint{color:#6b7280;font-size:12px;margin-top:7px}
+
+  /* queue — only rendered when there's more than one item */
+  #queue{display:none}
+  .qhead{display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:14px}
+  .qhead button{width:auto;margin:0;padding:6px 12px;font-size:13px;font-weight:500;
+       background:transparent;color:var(--err);border:1px solid var(--line)}
+  #qlist{max-height:320px;overflow:auto}
+  .qrow{display:flex;align-items:center;gap:10px;padding:8px 2px;font-size:13px;
+       border-top:1px solid var(--line);color:var(--text)}
+  .qrow:first-child{border-top:0}
+  .qrow .g{width:14px;flex:none;text-align:center;color:var(--muted)}
+  .qrow .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .qrow .d{color:var(--muted);font-size:12px;flex:none;
+       max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .qrow a,.qrow .x{color:var(--accent2);text-decoration:none;font-size:12px;flex:none;
+       border:0;background:transparent;cursor:pointer;padding:2px 5px;width:auto;margin:0}
+  .qrow .x{color:var(--muted)}
+  .qrow .x:hover{color:var(--text)}
+  .qrow.pend,.qrow.cancelled,.qrow.notice{color:var(--muted)}
+  .qrow.notice .g{color:var(--warn)}
+  .qrow.done .g{color:var(--accent2)}
+  .qrow.run .g{color:var(--accent)}
+  .qrow.err .g,.qrow.err .d{color:var(--err)}
   .disclaimer{color:#5c6474;font-size:11px;line-height:1.55;text-align:center;margin:30px auto 0;max-width:660px}
   .disclaimer a{color:#7a8395}
   #guard{display:none;text-align:center;padding:48px 24px}
@@ -85,12 +115,13 @@
 
   <div id="main">
     <h1>🎙️ WTF Transcription Factory</h1>
-    <p class="sub">Paste a video or podcast link and press the button. Save just the audio, write a transcript, or both — all on this computer.</p>
+    <p class="sub">Paste a video or podcast link — or a whole list of them — and press the button. Save just the audio, write a transcript, or both — all on this computer.</p>
 
     <div class="card">
       <form id="form">
         <label for="url">Video link</label>
-        <input id="url" type="url" placeholder="https://…  (paste the page the video is on)" required autofocus>
+        <textarea id="url" rows="1" placeholder="https://…  (one link, or paste a whole list)" required autofocus></textarea>
+        <div class="hint" id="urlCount"></div>
 
         <label class="mlabel">What do you want?</label>
         <div class="modes" id="modes">
@@ -132,11 +163,20 @@
       <div class="hint" id="modelHint">The first transcription downloads the speech model once (a few minutes). After that it's quicker.</div>
     </div>
 
+    <div id="queue" class="card">
+      <div class="qhead">
+        <strong id="qcount">Queue</strong>
+        <span class="grow"></span>
+        <button id="stopBtn" type="button">Stop</button>
+      </div>
+      <div id="qlist"></div>
+    </div>
+
     <div id="log" class="log"></div>
 
     <div id="tarea" class="card">
       <div class="ttoolbar">
-        <strong style="color:var(--text)">Transcript</strong>
+        <strong id="tTitle" style="color:var(--text)">Transcript</strong>
         <label><input id="tsToggle" type="checkbox" checked> Timestamps</label>
         <span class="grow"></span>
         <button id="copyAll" type="button">Copy all</button>
@@ -162,7 +202,8 @@
 </div>
 
 <script>
-if (location.protocol === "file:") {
+const LIVE = location.protocol !== "file:";
+if (!LIVE) {
   document.getElementById("main").style.display = "none";
   document.getElementById("guard").style.display = "block";
 }
@@ -172,7 +213,7 @@ const form = $("#form"), goBtn = $("#go");
 const statusEl = $("#status"), logEl = $("#log");
 const tarea = $("#tarea"), tBody = $("#tbody"), tWrap = $("#twrap"), curLine = $("#curline");
 const actEl = $("#actions"), legend = $("#legend");
-let es = null, curWords = [], curStart = null;
+let curWords = [], curStart = null;
 
 const MODE_BTN = {transcript:"Transcribe", audio:"Download audio", both:"Transcribe + save audio"};
 const optsEl = $("#opts"), modelHint = $("#modelHint");
@@ -185,11 +226,123 @@ function setMode(m){
   const audioOnly = (m === "audio");          // nothing in Options applies
   optsEl.style.display = audioOnly ? "none" : "";
   modelHint.style.display = audioOnly ? "none" : "";
-  goBtn.textContent = MODE_BTN[m];
+  syncButton();
 }
 document.querySelectorAll("#modes button").forEach(b =>
   b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+/* ---- the paste box ---------------------------------------------------- */
+const urlEl = $("#url"), urlCount = $("#urlCount");
+const URL_RE = /https?:\/\/\S+/g;
+
+// Mirrors extract_urls() in app.py — forgiving about what surrounds the links
+// so a newline list, a comma list, a numbered list, or copied prose all work.
+function extractUrls(text){
+  const seen = new Set(), out = [];
+  for (const raw of ((text || "").match(URL_RE) || [])) {
+    let u = raw;
+    for (;;) {
+      if (/[.,;:!?"'<>]$/.test(u)) u = u.slice(0, -1);
+      else if (u.endsWith(")") && u.split(")").length > u.split("(").length) u = u.slice(0, -1);
+      else if (u.endsWith("]") && u.split("]").length > u.split("[").length) u = u.slice(0, -1);
+      else break;
+    }
+    if (u.length > 8 && !seen.has(u)) { seen.add(u); out.push(u); }
+  }
+  return out;
+}
+function syncUrlBox(){
+  urlEl.style.height = "auto";
+  urlEl.style.height = Math.min(urlEl.scrollHeight, 190) + "px";
+  const n = extractUrls(urlEl.value).length;
+  urlCount.style.display = n > 1 ? "block" : "none";
+  urlCount.textContent = n + " links found";
+}
+urlEl.addEventListener("input", syncUrlBox);
+// Enter still submits, as it did when this was an <input>. Once there's a list
+// in the box, Enter is for editing it — use the button.
+urlEl.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey && !urlEl.value.includes("\n")) {
+    e.preventDefault(); form.requestSubmit();
+  }
+});
+
+/* ---- the queue -------------------------------------------------------- */
+const GLYPH = {done:"✓", error:"✕", running:"▸", cancelled:"⊘", resolving:"⋯",
+               queued:"·", notice:"ℹ"};
+let items = [], runningId = null;
+
+function esc(s){ const d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
+
+function itemById(id){ return items.find(i => i.id === id); }
+function busy(){ return items.some(i => ["queued","running","resolving"].includes(i.status)); }
+
+function syncButton(){
+  goBtn.textContent = busy() ? "Add to queue" : MODE_BTN[mode];
+}
+
+function renderQueue(){
+  // The contract: one item and the page looks exactly like it always has.
+  const q = $("#queue");
+  if (items.length < 2) { q.style.display = "none"; return; }
+  q.style.display = "block";
+
+  const work = items.filter(i => i.status !== "notice");   // notices aren't work
+  const done = work.filter(i => i.status === "done").length;
+  const failed = work.filter(i => i.status === "error").length;
+  $("#qcount").textContent = `Queue · ${done} of ${work.length} done`
+                           + (failed ? ` · ${failed} failed` : "");
+  $("#stopBtn").style.display = busy() ? "" : "none";
+
+  $("#qlist").innerHTML = items.map(i => {
+    const cls = {running:"run", error:"err", queued:"pend"}[i.status] || i.status;
+    let right = "";
+    if (i.status === "done") {
+      if (i.mode !== "audio")
+        right += `<a href="/api/jobs/${i.id}/download/txt" download>⬇ txt</a>`
+              +  `<a href="/api/jobs/${i.id}/download/ts" download>⬇ ts</a>`;
+      if (i.mode !== "transcript")
+        right += `<a href="/api/jobs/${i.id}/download/audio" download>⬇ mp3</a>`;
+      right += `<button class="x" data-reveal="${i.id}" title="Open folder">📂</button>`;
+    } else if (i.status === "error") {
+      right = `<span class="d">${esc(i.error || "failed")}</span>`;
+    } else if (i.status === "cancelled") {
+      right = `<span class="d">stopped</span>`;
+    } else if (i.status === "resolving") {
+      right = `<span class="d">expanding…</span>`;
+    } else if (i.status === "queued") {
+      right = `<button class="x" data-remove="${i.id}" title="Remove">✕</button>`;
+    }
+    // Titles come from yt-dlp, so they go through esc().
+    return `<div class="qrow ${cls}"><span class="g">${GLYPH[i.status] || "·"}</span>`
+         + `<span class="t">${esc(i.title)}</span>${right}</div>`;
+  }).join("");
+
+  const run = $("#qlist .qrow.run");
+  if (run) run.scrollIntoView({block:"nearest"});
+}
+
+function setItems(next){
+  items = next || [];
+  // Let go of the panel once its item stops running, so the next thing to
+  // start can claim it — and so a failure with nothing running still reports.
+  if (!items.some(i => i.id === runningId && i.status === "running")) runningId = null;
+  renderQueue();
+  syncButton();
+}
+
+$("#qlist").addEventListener("click", e => {
+  const rm = e.target.closest("[data-remove]"), rv = e.target.closest("[data-reveal]");
+  if (rm) fetch(`/api/queue/${rm.dataset.remove}`, {method:"DELETE"})
+            .then(r => r.json()).then(j => setItems(j.items)).catch(()=>{});
+  if (rv) fetch(`/api/jobs/${rv.dataset.reveal}/reveal`, {method:"POST"});
+});
+$("#stopBtn").addEventListener("click", () =>
+  fetch("/api/queue/stop", {method:"POST"})
+    .then(r => r.json()).then(j => setItems(j.items)).catch(()=>{}));
+
 setMode("transcript");
+syncUrlBox();
 
 function setStatus(t, isErr){ statusEl.className = "status" + (isErr ? " err" : ""); statusEl.innerHTML = t; }
 function log(line){ logEl.style.display="block"; logEl.textContent += line + "\n"; logEl.scrollTop = logEl.scrollHeight; }
@@ -227,57 +380,90 @@ $("#copyAll").addEventListener("click", () => {
   navigator.clipboard.writeText(text).then(()=>{ const b=$("#copyAll"); b.textContent="Copied ✓"; setTimeout(()=>b.textContent="Copy all",1500); });
 });
 
-if (form) form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  if (es) es.close();
-  logEl.textContent=""; logEl.style.display="none";
-  tBody.innerHTML=""; curWords=[]; curStart=null; renderCurrent();
-  tarea.style.display="none"; actEl.style.display="none"; actEl.innerHTML=""; legend.style.display="none";
-  goBtn.disabled = true; goBtn.textContent = "Working…";
-  setStatus('<span class="spin"></span>Starting…');
+/* Show the finished item's downloads under the transcript. Reads the item's
+   own mode, not the form's — by the time item 3 finishes you may have changed
+   the controls for whatever you queued next. */
+function showActions(jobId){
+  const it = itemById(jobId);
+  const m = it ? it.mode : mode;
+  const r = it && it.result;
+  // The links live inside the transcript card, so it has to be visible even
+  // when there's no transcript (audio-only).
+  tarea.style.display = "block";
+  tarea.classList.toggle("noText", tBody.children.length === 0);
+  actEl.style.display = "flex";
+  const links = [];
+  if (m !== "audio") {
+    links.push(`<a href="/api/jobs/${jobId}/download/txt" download>⬇︎ Readable (.txt)</a>`);
+    links.push(`<a href="/api/jobs/${jobId}/download/ts" download>⬇︎ With timestamps (.txt)</a>`);
+    if (r && r.srt) links.push(`<a href="/api/jobs/${jobId}/download/srt" download>⬇︎ Subtitles (.srt)</a>`);
+    legend.style.display = "block";
+  }
+  if (m !== "transcript") links.push(`<a href="/api/jobs/${jobId}/download/audio" download>⬇︎ Download MP3</a>`);
+  links.push(`<button id="reveal">📂 Open folder</button>`);
+  actEl.innerHTML = links.join("");
+  $("#reveal").onclick = () => fetch(`/api/jobs/${jobId}/reveal`, {method:"POST"});
+}
 
-  const payload = {
-    url: $("#url").value.trim(), mode,
-    model: $("#model").value, language: $("#language").value, srt: $("#srt").checked,
-  };
+/* One stream for the whole app, opened once and held for the life of the page.
+   That's what lets a reload reattach to a run instead of orphaning it.
+   (Skipped entirely when the page was opened as a file — there's no app to
+   talk to, and the guard screen is showing instead.) */
+const es = LIVE ? new EventSource("/api/queue/events") : {};
+es.onmessage = (m) => {
+  const ev = JSON.parse(m.data);
+  if (ev.kind === "state") { setItems(ev.items); return; }
 
-  let jobId;
-  try {
-    const r = await fetch("/api/jobs", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)});
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error || "Failed to start");
-    jobId = j.job_id;
-  } catch (err) {
-    setStatus("Error: " + err.message, true); goBtn.disabled=false; goBtn.textContent=MODE_BTN[mode]; return;
+  const it = itemById(ev.job);
+
+  // A new item took the floor: hand the transcript panel over to it. Gated on
+  // the item actually running, so appending to a busy queue doesn't yank the
+  // panel away from whatever is mid-transcription.
+  if (it && it.status === "running" && ev.job !== runningId) {
+    runningId = ev.job;
+    logEl.textContent = ""; logEl.style.display = "none";
+    tBody.innerHTML = ""; curWords = []; curStart = null; renderCurrent();
+    // Hidden until a segment arrives, so an audio-only item doesn't inherit
+    // the previous item's empty transcript panel.
+    tarea.style.display = "none"; tarea.classList.remove("noText");
+    actEl.style.display = "none"; actEl.innerHTML = ""; legend.style.display = "none";
+    $("#tTitle").textContent = it.title;
   }
 
-  es = new EventSource(`/api/jobs/${jobId}/events`);
-  es.onmessage = (m) => {
-    const ev = JSON.parse(m.data);
-    if (ev.kind === "status")        setStatus('<span class="spin"></span>' + ev.text);
-    else if (ev.kind === "download") log(ev.text);
-    else if (ev.kind === "segment")  addSeg(ev.text, ev.start);
-    else if (ev.kind === "done") {
-      flushPara();
-      setStatus("✅ " + ev.text);
-      es.close(); goBtn.disabled=false; goBtn.textContent=MODE_BTN[mode];
-      actEl.style.display="flex";
-      const links = [];
-      if (mode !== "audio") {
-        links.push(`<a href="/api/jobs/${jobId}/download/txt" download>⬇︎ Readable (.txt)</a>`);
-        links.push(`<a href="/api/jobs/${jobId}/download/ts" download>⬇︎ With timestamps (.txt)</a>`);
-        if ($("#srt").checked) links.push(`<a href="/api/jobs/${jobId}/download/srt" download>⬇︎ Subtitles (.srt)</a>`);
-        legend.style.display="block";
-      }
-      if (mode !== "transcript") links.push(`<a href="/api/jobs/${jobId}/download/audio" download>⬇︎ Download MP3</a>`);
-      links.push(`<button id="reveal">📂 Open folder</button>`);
-      actEl.innerHTML = links.join("");
-      $("#reveal").onclick = () => fetch(`/api/jobs/${jobId}/reveal`, {method:"POST"});
-    }
-    else if (ev.kind === "error") { setStatus("❌ " + ev.text, true); es.close(); goBtn.disabled=false; goBtn.textContent=MODE_BTN[mode]; }
+  // Only the item holding the panel writes to it. The exception is when
+  // nothing is running — a playlist that couldn't be read has no row of its
+  // own to report from, so it gets the status line.
+  if (ev.job !== runningId && runningId !== null) return;
+
+  if (ev.kind === "status")         setStatus('<span class="spin"></span>' + ev.text);
+  else if (ev.kind === "download")  log(ev.text);
+  else if (ev.kind === "segment")   addSeg(ev.text, ev.start);
+  else if (ev.kind === "done")     { flushPara(); setStatus("✅ " + ev.text); showActions(ev.job); }
+  else if (ev.kind === "cancelled") setStatus("⊘ " + ev.text);
+  else if (ev.kind === "error")     setStatus("❌ " + ev.text, true);
+};
+es.onerror = () => {};
+
+if (form) form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const payload = {
+    text: urlEl.value, mode,
+    model: $("#model").value, language: $("#language").value, srt: $("#srt").checked,
   };
-  es.onerror = () => {};
+  setStatus('<span class="spin"></span>Starting…');
+  try {
+    const r = await fetch("/api/queue", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Failed to start");
+    setItems(j.items);
+    urlEl.value = ""; syncUrlBox();
+  } catch (err) {
+    setStatus("Error: " + err.message, true);
+  }
 });
+
+// Reattach to whatever the app is already doing.
+fetch("/api/queue").then(r => r.json()).then(j => setItems(j.items)).catch(()=>{});
 </script>
 </body>
 </html>

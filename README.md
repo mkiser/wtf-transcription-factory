@@ -55,6 +55,24 @@ Then paste a link and pick what you want:
 
 The text streams in live; when it's done you get download buttons and **Open folder**.
 
+### Doing a whole batch
+
+You can paste **more than one link**. The box takes a list — newlines, commas,
+numbered lines, or just a chunk of text you copied with links in it. It finds
+every `http`/`https` link, tells you how many, and works through them one at a
+time. A queue appears listing each one, and finished items keep their own
+download buttons.
+
+Paste a **playlist or channel** link and it expands into the individual videos
+first. A `watch?v=…&list=…` link — what you get clicking a video from *inside*
+a playlist — stays a single video, so you never queue 200 things by accident.
+Channels are capped at 200 videos, and it says so when it hits the cap.
+
+While the queue runs you can **✕** anything that hasn't started yet, press
+**Stop** to halt everything including the item in progress, and keep adding
+more links — the button turns into **Add to queue**. Closing or reloading the
+page doesn't interrupt anything; reopening reattaches to the run.
+
 **YouTube needs a JavaScript runtime.** YouTube requires solving a signature
 challenge, which needs **Node.js** ([nodejs.org](https://nodejs.org)) or
 **Deno**. The app finds one automatically — including Homebrew and nvm installs

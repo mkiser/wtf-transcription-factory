@@ -13,6 +13,7 @@ ffmpeg if one is present).
 Don't run this directly — open the "WTF Transcription Factory" app (or re-run
 the installer). It opens your browser for you.
 """
+import itertools
 import json
 import os
 import queue
@@ -97,6 +98,10 @@ app = Flask(__name__)
 jobs = {}
 jobs_lock = threading.Lock()
 work_q: "queue.Queue" = queue.Queue()
+_seq = itertools.count(1)               # stable display order for the queue
+# Pages watching the whole queue, as opposed to one job. The page holds this
+# open for its whole life, so a reload reattaches to whatever is running.
+queue_listeners = set()
 _models = {}
 _models_lock = threading.Lock()
 _ffmpeg_dir = None
@@ -172,10 +177,15 @@ def get_model(name):
 
 
 def emit(job, kind, text, **extra):
-    ev = {"kind": kind, "text": text, "t": round(time.time(), 3)}
+    ev = {"kind": kind, "text": text, "job": job["id"], "t": round(time.time(), 3)}
     ev.update(extra)
-    job["events"].append(ev)
-    for q in list(job["listeners"]):
+    if kind == "download":
+        # Live-only. Replaying thousands of progress lines on reconnect is pure
+        # noise, and across a long queue it is a lot of memory holding nothing.
+        job["dlog"].append(ev)
+    else:
+        job["events"].append(ev)
+    for q in list(job["listeners"]) + list(queue_listeners):
         try:
             q.put_nowait(ev)
         except Exception:
@@ -225,6 +235,216 @@ _MODEL_SIZE = {
     "tiny.en": "~75 MB", "base.en": "~145 MB", "small.en": "~480 MB",
     "medium.en": "~1.5 GB", "large-v3": "~3 GB",
 }
+
+
+# --------------------------------------------------------------------------- #
+# The queue
+# --------------------------------------------------------------------------- #
+class Cancelled(Exception):
+    """Raised inside a job when the user stops it. Not an error."""
+
+
+_URL_RE = re.compile(r"https?://\S+")
+# Sentence punctuation that can't end a URL. Brackets are handled separately,
+# because plenty of real URLs legitimately end in ")".
+_TRAILING = ".,;:!?\"'<>"
+_PAIRS = {")": "(", "]": "["}
+
+
+def _trim_url(u: str) -> str:
+    while u:
+        if u[-1] in _TRAILING:
+            u = u[:-1]
+        elif u[-1] in _PAIRS and u.count(u[-1]) > u.count(_PAIRS[u[-1]]):
+            u = u[:-1]
+        else:
+            break
+    return u
+
+
+def extract_urls(text):
+    """Pull every http(s) link out of arbitrary pasted text, in order, deduped.
+
+    Deliberately forgiving about what surrounds the links, so a newline list, a
+    comma list, a numbered list, or a chunk of copied prose with links buried
+    in it all work without anyone having to think about format.
+    """
+    seen, out = set(), []
+    for raw in _URL_RE.findall(text or ""):
+        u = _trim_url(raw)
+        if len(u) > 8 and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+# Only patterns that are unambiguously a *collection*. A "watch?v=X&list=Y" URL
+# is one video that happens to sit in a playlist — that's what you get when you
+# click a video from inside one — and expanding it would silently queue a few
+# hundred videos off a single pasted link.
+_COLLECTION_RE = re.compile(r"(?i)/playlist\b|/channel/|/c/|/user/|/@[^/\s]+|/videos/?$")
+
+
+def is_collection_url(url: str) -> bool:
+    if re.search(r"[?&]v=", url):        # a specific video always wins
+        return False
+    return bool(_COLLECTION_RE.search(url))
+
+
+def short_title(url: str) -> str:
+    """A readable placeholder until yt-dlp tells us the real title."""
+    u = re.sub(r"^https?://(www\.)?", "", url)
+    return u[:70] + ("…" if len(u) > 70 else "")
+
+
+def make_job(url, opts):
+    job = {
+        "id": uuid.uuid4().hex[:12],
+        "seq": next(_seq),
+        "url": url,
+        "title": short_title(url),
+        "mode": opts["mode"],
+        "model": opts["model"],
+        "language": opts["language"],
+        "srt": opts["srt"],
+        "status": "queued",
+        "cancelled": False,
+        "proc": None,
+        "events": [],
+        "dlog": deque(maxlen=40),
+        "listeners": set(),
+        "result": None,
+        "error": None,
+        "dir": None,
+        "audio_path": None,
+    }
+    with jobs_lock:
+        jobs[job["id"]] = job
+    return job
+
+
+def snapshot():
+    """The whole queue, small enough to broadcast on every status change.
+
+    'removed' jobs stay in `jobs` (so their download URLs 404 cleanly instead
+    of raising) but are filtered out here — they never ran, so there is nothing
+    to show. A job stopped mid-run is 'cancelled' and stays visible.
+    """
+    with jobs_lock:
+        items = sorted(jobs.values(), key=lambda j: j["seq"])
+        return [{"id": j["id"], "seq": j["seq"], "title": j["title"],
+                 "url": j["url"], "status": j["status"], "mode": j["mode"],
+                 "result": j["result"], "error": j["error"]}
+                for j in items if j["status"] != "removed"]
+
+
+def push_state():
+    ev = {"kind": "state", "items": snapshot(), "t": round(time.time(), 3)}
+    for q in list(queue_listeners):
+        try:
+            q.put_nowait(ev)
+        except Exception:                     # noqa: BLE001
+            pass
+
+
+def cancel_job(jid) -> bool:
+    """Remove a pending item, or kill the running one."""
+    job = jobs.get(jid)
+    if not job or job["status"] in ("done", "error", "cancelled", "removed"):
+        return False
+    job["cancelled"] = True
+    if job["status"] == "running":
+        proc = job.get("proc")
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()              # the transcribe loop checks the flag
+            except Exception:                 # noqa: BLE001
+                pass
+    else:
+        job["status"] = "removed"
+    push_state()
+    return True
+
+
+def stop_all() -> int:
+    return sum(cancel_job(j["id"]) for j in list(jobs.values())
+               if j["status"] in ("queued", "resolving", "running"))
+
+
+# A playlist is a reasonable thing to paste; a channel's entire back catalogue
+# usually isn't what anyone meant. Queue a generous slice and say so, rather
+# than silently dropping the rest or filling the list with 3,000 rows.
+EXPAND_LIMIT = 200
+
+
+def expand_collection(job, opts):
+    """Turn a playlist/channel URL into one queued job per video.
+
+    --flat-playlist lists entries without extracting each video, so this is one
+    request rather than N. Runs on its own thread: a long channel listing must
+    never hold up the POST that submitted it.
+    """
+    _ytdlp_ready.wait(timeout=180)
+    cmd = [sys.executable, "-m", "yt_dlp", "--flat-playlist", "-J",
+           "--ignore-errors"] + js_runtime_args() + [job["url"]]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        data = json.loads(r.stdout or "{}")
+        entries = [e for e in (data.get("entries") or []) if e]
+    except Exception:                              # noqa: BLE001
+        entries = []
+
+    if job["cancelled"]:
+        job["status"] = "removed"
+        push_state()
+        return
+
+    if not entries:
+        job["status"] = "error"
+        job["error"] = ("Couldn't read that playlist. Check the link, or paste "
+                        "the individual video links instead.")
+        emit(job, "error", job["error"])
+        push_state()
+        return
+
+    total = len(entries)
+    for e in entries[:EXPAND_LIMIT]:
+        url = e.get("url") or e.get("webpage_url") or e.get("id")
+        if not url:
+            continue
+        if not str(url).startswith("http"):
+            url = f"https://www.youtube.com/watch?v={url}"
+        child = make_job(url, opts)
+        if e.get("title"):
+            child["title"] = e["title"]
+        work_q.put(child)
+
+    if total > EXPAND_LIMIT:
+        # Keep the row, as a standing note. Silently queueing 200 of 3,000
+        # would look exactly like having queued all of them.
+        job["status"] = "notice"
+        job["title"] = (f"{total} videos found — queued the first "
+                        f"{EXPAND_LIMIT}. Paste the rest separately.")
+    else:
+        job["status"] = "removed"              # replaced by its children
+    push_state()
+
+
+def enqueue(urls, opts):
+    made = []
+    for u in urls:
+        job = make_job(u, opts)
+        if is_collection_url(u):
+            job["status"] = "resolving"
+            job["title"] = f"Playlist — {short_title(u)}"
+            threading.Thread(target=expand_collection, args=(job, opts),
+                             daemon=True).start()
+        else:
+            work_q.put(job)
+        made.append(job)
+    cleanup_old_runs()
+    push_state()
+    return made
 
 
 # --------------------------------------------------------------------------- #
@@ -303,6 +523,7 @@ def download_audio(job, jobdir):
     recent = deque(maxlen=12)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
+    job["proc"] = proc                  # so Stop can terminate the download
     last = ""
     for line in proc.stdout:
         line = line.rstrip()
@@ -313,6 +534,10 @@ def download_audio(job, jobdir):
                 last = line
     proc.wait()
     if proc.returncode != 0:
+        # Check this first: a terminated yt-dlp also exits non-zero, and
+        # blaming the user's URL for their own Stop would be nonsense.
+        if job["cancelled"]:
+            raise Cancelled()
         tail = " | ".join(recent).lower()
         if "ffmpeg" in tail:
             hint = " (Audio tool problem — try installing ffmpeg, or re-launch.)"
@@ -333,8 +558,34 @@ def download_audio(job, jobdir):
     return mp3s[-1]
 
 
+def discard_scratch(job, only_if_empty=False):
+    """Remove a job's run folder. Guarded: in audio mode job["dir"] points at
+    the shared audio folder, which must never be touched."""
+    d = Path(job["dir"]) if job.get("dir") else None
+    if not d or d == OUT or OUT not in d.parents or not d.is_dir():
+        return
+    if only_if_empty and any(d.iterdir()):
+        return
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def run_job(job):
+    """Run one job, cleaning up after itself if it's stopped or fails."""
     job["status"] = "running"
+    push_state()
+    try:
+        _run_job(job)
+    except Cancelled:
+        discard_scratch(job)            # don't leave a half-downloaded MP3
+        raise
+    except Exception:                   # noqa: BLE001
+        # A link that couldn't be downloaded otherwise leaves an empty folder
+        # behind — barely noticeable once, but a queue makes a mess of it.
+        discard_scratch(job, only_if_empty=True)
+        raise
+
+
+def _run_job(job):
     jobdir = OUT / job["id"]
     jobdir.mkdir(parents=True, exist_ok=True)
     job["dir"] = str(jobdir)
@@ -373,6 +624,8 @@ def run_job(job):
                         f"model — first time only, it downloads once ({size}) and "
                         f"may take a few minutes…")
 
+    if job["cancelled"]:            # covers a Stop during the model download
+        raise Cancelled()
     model = get_model(job["model"])
     lang = None if job["language"] == "auto" else job["language"]
     segments, info = model.transcribe(
@@ -383,6 +636,8 @@ def run_job(job):
 
     segs, srt_blocks, n = [], [], 0
     for seg in segments:
+        if job["cancelled"]:        # segments arrive continuously, so this is quick
+            raise Cancelled()
         text = seg.text.strip()
         if not text:
             continue
@@ -422,11 +677,22 @@ def worker():
     while True:
         job = work_q.get()
         try:
+            if job["cancelled"]:
+                # Removed or stopped while it sat in the queue.
+                if job["status"] != "removed":
+                    job["status"] = "cancelled"
+                continue
             run_job(job)
+        except Cancelled:
+            job["status"] = "cancelled"
+            emit(job, "cancelled", "Stopped.")
         except Exception as e:                       # noqa: BLE001
             job["status"] = "error"
+            job["error"] = str(e)
             emit(job, "error", str(e))
         finally:
+            job["proc"] = None
+            push_state()
             work_q.task_done()
 
 
@@ -441,38 +707,97 @@ def index():
     return send_file(BASE / "index.html")
 
 
-@app.route("/api/jobs", methods=["POST"])
-def create_job():
-    data = request.get_json(force=True, silent=True) or {}
-    url = (data.get("url") or "").strip()
-    if not url:
-        return jsonify({"error": "Please paste a video URL."}), 400
+def read_opts(data):
     mode = data.get("mode")
     if mode is None:
         # A browser holding a cached copy of the old page still posts keep_audio.
         mode = "both" if data.get("keep_audio") else "transcript"
     if mode not in MODES:
-        return jsonify({"error": f"Unknown mode '{mode}'."}), 400
-    job = {
-        "id": uuid.uuid4().hex[:12],
-        "url": url,
-        "mode": mode,
-        "model": data.get("model", "small.en"),
-        "language": data.get("language", "en"),
-        "srt": bool(data.get("srt", True)),
-        "status": "queued",
-        "events": [],
-        "listeners": set(),
-        "result": None,
-        "dir": None,
-        "audio_path": None,
-    }
-    cleanup_old_runs()
-    with jobs_lock:
-        jobs[job["id"]] = job
-    emit(job, "status", "Queued…")
-    work_q.put(job)
-    return jsonify({"job_id": job["id"]})
+        raise ValueError(f"Unknown mode '{mode}'.")
+    return {"mode": mode,
+            "model": data.get("model", "small.en"),
+            "language": data.get("language", "en"),
+            "srt": bool(data.get("srt", True))}
+
+
+@app.route("/api/queue", methods=["GET"])
+def get_queue():
+    return jsonify({"items": snapshot()})
+
+
+@app.route("/api/queue", methods=["POST"])
+def post_queue():
+    data = request.get_json(force=True, silent=True) or {}
+    # Accept a raw paste, an explicit list, or the old single-url field, and
+    # run all three through the same extraction — never trust the client's split.
+    text = str(data.get("text") or "")
+    if data.get("urls"):
+        text += "\n" + "\n".join(str(u) for u in data["urls"])
+    if data.get("url"):
+        text += "\n" + str(data["url"])
+    urls = extract_urls(text)
+    if not urls:
+        return jsonify({"error": "No links found — each link needs to start "
+                                 "with http:// or https://."}), 400
+    try:
+        opts = read_opts(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    made = enqueue(urls, opts)
+    # No "Queued…" event: the row in the queue says so, and broadcasting it
+    # would let a newly-appended job overwrite the running one's status line.
+    return jsonify({"items": snapshot(), "added": len(made),
+                    "job_id": made[0]["id"]})
+
+
+@app.route("/api/queue/<jid>", methods=["DELETE"])
+def delete_queue_item(jid):
+    if jid not in jobs:
+        abort(404)
+    return jsonify({"ok": cancel_job(jid), "items": snapshot()})
+
+
+@app.route("/api/queue/stop", methods=["POST"])
+def stop_queue():
+    return jsonify({"stopped": stop_all(), "items": snapshot()})
+
+
+@app.route("/api/queue/events")
+def queue_events():
+    """One stream for the whole app, held open for the life of the page.
+
+    Unlike the per-job stream this never self-terminates, which is what lets a
+    reload reattach to a run instead of orphaning it.
+    """
+    def stream():
+        q: "queue.Queue" = queue.Queue()
+        queue_listeners.add(q)
+        try:
+            yield f"data: {json.dumps({'kind': 'state', 'items': snapshot()})}\n\n"
+            # Replay only the running job's transcript. Finished ones are on
+            # disk and reachable from their row.
+            running = next((j for j in sorted(jobs.values(), key=lambda j: j["seq"])
+                            if j["status"] == "running"), None)
+            if running:
+                for ev in list(running["events"]):
+                    yield f"data: {json.dumps(ev)}\n\n"
+            while True:
+                try:
+                    ev = q.get(timeout=15)
+                    yield f"data: {json.dumps(ev)}\n\n"
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+        finally:
+            queue_listeners.discard(q)
+
+    return Response(stream(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/jobs", methods=["POST"])
+def create_job():
+    # Kept so a browser holding a cached copy of the old page keeps working.
+    return post_queue()
 
 
 @app.route("/api/jobs/<jid>")
