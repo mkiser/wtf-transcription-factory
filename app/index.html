@@ -73,7 +73,7 @@
   @keyframes s{to{transform:rotate(360deg)}}
   .hint{color:#6b7280;font-size:12px;margin-top:7px}
 
-  /* queue — only rendered when there's more than one item */
+  /* queue — rendered when there's at least one item */
   #queue{display:none}
   .qhead{display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:14px}
   .qhead button{width:auto;margin:0;padding:6px 12px;font-size:13px;font-weight:500;
@@ -282,9 +282,9 @@ function syncButton(){
 }
 
 function renderQueue(){
-  // The contract: one item and the page looks exactly like it always has.
+  // Keep the queue visible while it has any item.
   const q = $("#queue");
-  if (items.length < 2) { q.style.display = "none"; return; }
+  if (items.length === 0) { q.style.display = "none"; return; }
   q.style.display = "block";
 
   const work = items.filter(i => i.status !== "notice");   // notices aren't work
@@ -374,19 +374,20 @@ $("#tsToggle").addEventListener("change", e => {
   tBody.classList.toggle("hide-ts", !e.target.checked);
 });
 $("#copyAll").addEventListener("click", () => {
-  const text = Array.from(tBody.querySelectorAll(".para"))
-    .map(p => p.childNodes[1] ? p.childNodes[1].textContent.trim() : p.textContent.trim())
-    .join("\n\n");
+  const parts = Array.from(tBody.querySelectorAll(".para"))
+    .map(p => p.childNodes[1] ? p.childNodes[1].textContent.trim() : p.textContent.trim());
+  if (curWords.length) parts.push(curWords.join(" "));
+  const text = parts.join("\n\n");
   navigator.clipboard.writeText(text).then(()=>{ const b=$("#copyAll"); b.textContent="Copied ✓"; setTimeout(()=>b.textContent="Copy all",1500); });
 });
 
 /* Show the finished item's downloads under the transcript. Reads the item's
    own mode, not the form's — by the time item 3 finishes you may have changed
    the controls for whatever you queued next. */
-function showActions(jobId){
+function showActions(jobId, result){
   const it = itemById(jobId);
   const m = it ? it.mode : mode;
-  const r = it && it.result;
+  const r = result || (it && it.result);
   // The links live inside the transcript card, so it has to be visible even
   // when there's no transcript (audio-only).
   tarea.style.display = "block";
@@ -410,6 +411,7 @@ function showActions(jobId){
    (Skipped entirely when the page was opened as a file — there's no app to
    talk to, and the guard screen is showing instead.) */
 const es = LIVE ? new EventSource("/api/queue/events") : {};
+es.onopen = () => { runningId = null; };
 es.onmessage = (m) => {
   const ev = JSON.parse(m.data);
   if (ev.kind === "state") { setItems(ev.items); return; }
@@ -438,7 +440,7 @@ es.onmessage = (m) => {
   if (ev.kind === "status")         setStatus('<span class="spin"></span>' + ev.text);
   else if (ev.kind === "download")  log(ev.text);
   else if (ev.kind === "segment")   addSeg(ev.text, ev.start);
-  else if (ev.kind === "done")     { flushPara(); setStatus("✅ " + ev.text); showActions(ev.job); }
+  else if (ev.kind === "done")     { flushPara(); setStatus("✅ " + ev.text); showActions(ev.job, ev.result || it?.result); }
   else if (ev.kind === "cancelled") setStatus("⊘ " + ev.text);
   else if (ev.kind === "error")     setStatus("❌ " + ev.text, true);
 };

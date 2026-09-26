@@ -17,7 +17,7 @@ os.environ.setdefault("WTF_OUTPUT_DIR",
                       os.path.join(tempfile.gettempdir(), "wtf-test-output"))
 
 import app as app_mod                                   # noqa: E402
-from app import extract_urls, is_collection_url         # noqa: E402
+from app import extract_urls, is_collection_url, srt_ts  # noqa: E402
 
 OPTS = {"mode": "transcript", "model": "small.en", "language": "en", "srt": True}
 
@@ -102,6 +102,27 @@ class TestIsCollectionUrl(unittest.TestCase):
 
     def test_videos_tab(self):
         self.assertTrue(is_collection_url("https://www.youtube.com/@someone/videos"))
+
+    def test_handle_video_urls_are_not_collections(self):
+        self.assertFalse(is_collection_url("https://www.tiktok.com/@someone/video/123456789"))
+        self.assertFalse(is_collection_url("https://www.threads.net/@u/post/abc"))
+        self.assertFalse(is_collection_url("https://www.instagram.com/@someone/reel/abc"))
+        self.assertFalse(is_collection_url("https://www.youtube.com/@someone/live"))
+
+    def test_handle_collection_urls(self):
+        self.assertTrue(is_collection_url("https://www.tiktok.com/@someone"))
+        self.assertTrue(is_collection_url("https://www.youtube.com/@someone/streams"))
+        self.assertTrue(is_collection_url("https://www.youtube.com/@someone/"))
+
+
+class TestSrtTs(unittest.TestCase):
+    def test_rounding_across_minute_and_hour(self):
+        self.assertEqual(srt_ts(59.9996), "00:01:00,000")
+        self.assertEqual(srt_ts(3599.9996), "01:00:00,000")
+
+    def test_regular_times(self):
+        self.assertEqual(srt_ts(61.5), "00:01:01,500")
+        self.assertEqual(srt_ts(0), "00:00:00,000")
 
 
 class TestCancel(unittest.TestCase):

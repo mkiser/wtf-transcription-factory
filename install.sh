@@ -21,8 +21,16 @@ info() { printf "   %s\n" "$1"; }
 
 bold "🎙️  Installing ${NAME}"
 
+PYTHON_OK=1
 if ! command -v python3 >/dev/null 2>&1; then
-  bold "First you need Python (it's free and takes ~2 minutes)."
+  PYTHON_OK=0
+elif [ "$(uname)" = "Darwin" ] && [ "$(command -v python3)" = "/usr/bin/python3" ] && ! xcode-select -p >/dev/null 2>&1; then
+  PYTHON_OK=0
+elif ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
+  PYTHON_OK=0
+fi
+if [ "$PYTHON_OK" -eq 0 ]; then
+  bold "First you need Python 3.10 or newer (it's free and takes ~2 minutes)."
   if [ "$(uname)" = "Darwin" ]; then
     open "https://www.python.org/downloads/" >/dev/null 2>&1 || true
   fi
@@ -34,6 +42,7 @@ fi
 
 bold "Downloading the latest version…"
 TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 curl -fsSL "https://codeload.github.com/${REPO}/tar.gz/refs/heads/${BRANCH}" -o "${TMP}/src.tgz"
 tar -xzf "${TMP}/src.tgz" -C "${TMP}"
 SRC="${TMP}/wtf-transcription-factory-${BRANCH}"
@@ -43,6 +52,10 @@ mkdir -p "${CODE_DIR}"
 rm -rf "${TMP}"
 
 bold "Setting things up (first time takes a few minutes)…"
+if [ -d "${CODE_DIR}/.venv" ] && ! "${CODE_DIR}/.venv/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
+  info "Rebuilding the virtual environment with Python 3.10 or newer."
+  rm -rf "${CODE_DIR}/.venv"
+fi
 [ -d "${CODE_DIR}/.venv" ] || python3 -m venv "${CODE_DIR}/.venv"
 "${CODE_DIR}/.venv/bin/python" -m pip install --quiet --upgrade pip
 "${CODE_DIR}/.venv/bin/python" -m pip install --quiet -r "${CODE_DIR}/app/requirements.txt"

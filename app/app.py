@@ -179,11 +179,7 @@ def get_model(name):
 def emit(job, kind, text, **extra):
     ev = {"kind": kind, "text": text, "job": job["id"], "t": round(time.time(), 3)}
     ev.update(extra)
-    if kind == "download":
-        # Live-only. Replaying thousands of progress lines on reconnect is pure
-        # noise, and across a long queue it is a lot of memory holding nothing.
-        job["dlog"].append(ev)
-    else:
+    if kind != "download":
         job["events"].append(ev)
     for q in list(job["listeners"]) + list(queue_listeners):
         try:
@@ -193,9 +189,11 @@ def emit(job, kind, text, **extra):
 
 
 def srt_ts(t: float) -> str:
-    h, rem = divmod(float(t), 3600)
-    m, s = divmod(rem, 60)
-    return f"{int(h):02d}:{int(m):02d}:{s:06.3f}".replace(".", ",")
+    total_ms = round(float(t) * 1000)
+    h, rem = divmod(total_ms, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, ms = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def hms(t: float) -> str:
@@ -282,7 +280,9 @@ def extract_urls(text):
 # is one video that happens to sit in a playlist — that's what you get when you
 # click a video from inside one — and expanding it would silently queue a few
 # hundred videos off a single pasted link.
-_COLLECTION_RE = re.compile(r"(?i)/playlist\b|/channel/|/c/|/user/|/@[^/\s]+|/videos/?$")
+_COLLECTION_RE = re.compile(
+    r"(?i)/playlist\b|/channel/|/c/|/user/|/@[^/\s?#]+"
+    r"(?:/(?:videos|streams|shorts|featured|playlists|podcasts))?/?(?=[?#]|$)|/videos/?$")
 
 
 def is_collection_url(url: str) -> bool:
@@ -311,7 +311,6 @@ def make_job(url, opts):
         "cancelled": False,
         "proc": None,
         "events": [],
-        "dlog": deque(maxlen=40),
         "listeners": set(),
         "result": None,
         "error": None,
@@ -518,12 +517,16 @@ def download_audio(job, jobdir):
     """Fetch the media's audio into jobdir and return the resulting MP3."""
     emit(job, "status", "Finding the video and downloading its audio…")
     _ytdlp_ready.wait(timeout=180)      # don't race a background yt-dlp upgrade
+    if job["cancelled"]:
+        raise Cancelled()
     cmd = ytdlp_cmd(job, jobdir, ensure_ffmpeg_dir())
 
     recent = deque(maxlen=12)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     job["proc"] = proc                  # so Stop can terminate the download
+    if job["cancelled"]:
+        proc.terminate()
     last = ""
     for line in proc.stdout:
         line = line.rstrip()
@@ -650,11 +653,12 @@ def _run_job(job):
     paras = build_paragraphs(segs)
     jobdir.mkdir(parents=True, exist_ok=True)   # defensive: never write into a missing folder
     (jobdir / "transcript.txt").write_text(
-        "\n\n".join(text for _, text in paras) + "\n")
+        "\n\n".join(text for _, text in paras) + "\n", encoding="utf-8")
     (jobdir / "transcript_timestamps.txt").write_text(
-        "\n\n".join(f"[{hms(start)}] {text}" for start, text in paras) + "\n")
+        "\n\n".join(f"[{hms(start)}] {text}" for start, text in paras) + "\n",
+        encoding="utf-8")
     if job["srt"]:
-        (jobdir / "transcript.srt").write_text("\n".join(srt_blocks))
+        (jobdir / "transcript.srt").write_text("\n".join(srt_blocks), encoding="utf-8")
 
     if job["mode"] == "both":
         job["audio_path"] = str(audio)
@@ -670,7 +674,7 @@ def _run_job(job):
                      "audio": audio.name if job["mode"] == "both" else None,
                      "segments": n, "paragraphs": len(paras)}
     job["status"] = "done"
-    emit(job, "done", f"All done — {n} lines transcribed.")
+    emit(job, "done", f"All done — {n} lines transcribed.", result=job["result"])
 
 
 def worker():
