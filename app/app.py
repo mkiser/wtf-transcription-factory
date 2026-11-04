@@ -105,6 +105,7 @@ queue_listeners = set()
 _models = {}
 _models_lock = threading.Lock()
 _ffmpeg_dir = None
+_ffmpeg_lock = threading.Lock()
 # Set unless a background yt-dlp upgrade is actually in flight.
 _ytdlp_ready = threading.Event()
 _ytdlp_ready.set()
@@ -114,26 +115,29 @@ _ytdlp_ready.set()
 # One-time provisioning
 # --------------------------------------------------------------------------- #
 def ensure_ffmpeg_dir():
+    """Find ffmpeg, downloading it the first time. This can take minutes, so it
+    must never run where it blocks the page. On failure it stays unset, so the
+    next job tries again."""
     global _ffmpeg_dir
-    if _ffmpeg_dir is not None:
-        return _ffmpeg_dir or None
-    found = shutil.which("ffmpeg")
-    if found:
-        _ffmpeg_dir = str(Path(found).parent)
-        return _ffmpeg_dir
-    try:
-        print("Setting up audio tools (ffmpeg) — one-time download…")
-        import static_ffmpeg
-        static_ffmpeg.add_paths()
+    with _ffmpeg_lock:
+        if _ffmpeg_dir is not None:
+            return _ffmpeg_dir
         found = shutil.which("ffmpeg")
         if found:
             _ffmpeg_dir = str(Path(found).parent)
-            print("  ffmpeg ready.")
             return _ffmpeg_dir
-    except Exception as e:                       # noqa: BLE001
-        print(f"  Could not auto-provision ffmpeg: {e}")
-    _ffmpeg_dir = ""
-    return None
+        try:
+            print("Setting up audio tools (ffmpeg) — one-time download…")
+            import static_ffmpeg
+            static_ffmpeg.add_paths()
+            found = shutil.which("ffmpeg")
+            if found:
+                _ffmpeg_dir = str(Path(found).parent)
+                print("  ffmpeg ready.")
+                return _ffmpeg_dir
+        except Exception as e:                       # noqa: BLE001
+            print(f"  Could not auto-provision ffmpeg: {e}")
+        return None
 
 
 def maybe_update_ytdlp():
@@ -387,7 +391,8 @@ def expand_collection(job, opts):
     cmd = [sys.executable, "-m", "yt_dlp", "--flat-playlist", "-J",
            "--ignore-errors"] + js_runtime_args() + [job["url"]]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                           timeout=300)
         data = json.loads(r.stdout or "{}")
         entries = [e for e in (data.get("entries") or []) if e]
     except Exception:                              # noqa: BLE001
@@ -519,11 +524,15 @@ def download_audio(job, jobdir):
     _ytdlp_ready.wait(timeout=180)      # don't race a background yt-dlp upgrade
     if job["cancelled"]:
         raise Cancelled()
+    if _ffmpeg_dir is None:
+        emit(job, "status", "Setting up audio tools. This one-time download can "
+                            "take a few minutes…")
     cmd = ytdlp_cmd(job, jobdir, ensure_ffmpeg_dir())
 
     recent = deque(maxlen=12)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+                            stderr=subprocess.STDOUT, text=True, errors="replace",
+                            bufsize=1)
     job["proc"] = proc                  # so Stop can terminate the download
     if job["cancelled"]:
         proc.terminate()
@@ -892,11 +901,13 @@ def pick_port(start=8765):
 
 
 if __name__ == "__main__":
+    # Redirected output on Windows can't encode every character the app prints.
+    sys.stdout.reconfigure(errors="replace")
     port = pick_port(int(os.environ.get("PORT", "8765")))
     url = f"http://127.0.0.1:{port}"
     cleanup_old_runs()
     maybe_update_ytdlp()
-    ensure_ffmpeg_dir()
+    threading.Thread(target=ensure_ffmpeg_dir, daemon=True).start()
     print(f"\n  WTF Transcription Factory is running →  {url}\n  (Close this window to stop.)\n")
     threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     app.run(host="127.0.0.1", port=port, threaded=True)

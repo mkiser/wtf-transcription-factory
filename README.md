@@ -91,9 +91,12 @@ stop the app.
 Open a terminal and run the command from Mac step 3. The installer starts the
 app and prints the command to start it again. Linux gets no launcher.
 
-**No security warnings:** the launcher is built on your own
+**No quarantine warnings:** the launcher is built on your own
 machine, so it's never quarantined, and a script piped into `bash`/`iex`
 isn't quarantined either.
+
+**Windows 10 on ARM isn't supported.** A speech component has no ARM version,
+and Windows 10 on ARM can't run the x64 one. Windows 11 on ARM works.
 
 ---
 
@@ -140,7 +143,9 @@ If you're offline it keeps the copy it has and tries again next time. The other
 components are left alone so a working install doesn't change under you.
 
 **Update** the app itself by re-running the install command (Mac step 3,
-Windows step 4). **Uninstall:** delete the app
+Windows step 4). Re-running also repairs an install that failed or got
+interrupted, and fixes transcription errors that mention `metadata_errors`.
+**Uninstall:** delete the app
 shortcuts and the app folder (`~/.wtf-transcription-factory` on macOS/Linux, or
 `%LOCALAPPDATA%\WTF Transcription Factory` on Windows).
 
