@@ -1,4 +1,6 @@
 flask>=3.0
 yt-dlp>=2024.8.6
 faster-whisper>=1.0.3
+# faster-whisper 1.2.1 passes metadata_errors to av.open(), which av 19 rejects.
+av<19
 static-ffmpeg>=2.7

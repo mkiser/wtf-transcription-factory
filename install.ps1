@@ -3,49 +3,23 @@
 # Run this in PowerShell:
 #   irm https://raw.githubusercontent.com/mkiser/wtf-transcription-factory/main/install.ps1 | iex
 #
-# It requires only Python 3. It downloads the app, sets up its own private
-# environment, creates Start Menu / Desktop shortcuts, and launches it.
+# You don't need to install anything first. It downloads the app and its own
+# private copy of Python, sets up its own environment, creates Start Menu /
+# Desktop shortcuts, and launches it.
 $ErrorActionPreference = "Stop"
 
 $Repo    = "mkiser/wtf-transcription-factory"
 $Branch  = "main"
 $Name    = "WTF Transcription Factory"
 $CodeDir = Join-Path $env:LOCALAPPDATA $Name
+$UvVersion = "0.13.4"
+# 3.12 has wheels for every dependency on the most systems. 3.13 and 3.14 lock
+# out older Macs, and onnxruntime has no wheel for 3.15.
+$PythonVersion = "3.12"
 
 function Say($m) { Write-Host "`n$m" -ForegroundColor Cyan }
 
 Say "Installing $Name ..."
-
-$pyCommand = $null
-$pyArgs = @()
-$candidates = @(@{ Name = 'python'; Args = @() }, @{ Name = 'py'; Args = @('-3') })
-foreach ($candidate in $candidates) {
-  $command = Get-Command $candidate.Name -ErrorAction SilentlyContinue
-  if ($command) {
-    $probeArgs = @($candidate.Args) + @('-c', "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)")
-    try {
-      & $command.Source @probeArgs 2>$null
-      if ($LASTEXITCODE -eq 0) {
-        $pyCommand = $command.Source
-        $pyArgs = @($candidate.Args)
-        break
-      }
-    } catch {
-      continue
-    }
-  }
-}
-if (-not $pyCommand) {
-  Say "First you need Python 3.10 or newer (it's free and takes ~2 minutes)."
-  Start-Process "https://www.python.org/downloads/"
-  Write-Host "  1. On the page that just opened, click the small link under the yellow"
-  Write-Host "     button: 'Or get the standalone installer for Python 3.x.x'."
-  Write-Host "  2. Open it. IMPORTANT: tick 'Add python.exe to PATH', then Install Now."
-  Write-Host "  3. Close this PowerShell window, open a new one, and run the same"
-  Write-Host "     install command again."
-  Write-Host "  Step-by-step guide: https://github.com/$Repo#windows"
-  return
-}
 
 Say "Downloading the latest version ..."
 $tmp = Join-Path $env:TEMP ("wtf_" + [System.Guid]::NewGuid().ToString("N"))
@@ -64,13 +38,42 @@ try {
 }
 
 Say "Setting things up (first time takes a few minutes) ..."
-$venvArgs = $pyArgs + @('-m', 'venv', (Join-Path $CodeDir ".venv"))
-& $pyCommand @venvArgs
-if ($LASTEXITCODE -ne 0) { throw "Virtual environment creation failed." }
-$venvPy = Join-Path $CodeDir ".venv\Scripts\python.exe"
+$venvDir = Join-Path $CodeDir ".venv"
+$venvPy = Join-Path $venvDir "Scripts\python.exe"
+# An environment on Python 3.10 to 3.14 already works, so an update leaves it in
+# place. Anything else, such as a failed install on 3.15, gets rebuilt.
+$venvOk = $false
+if (Test-Path $venvPy) {
+  try {
+    & $venvPy -c "import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,14) else 1)" 2>$null
+    $venvOk = ($LASTEXITCODE -eq 0)
+  } catch {
+    $venvOk = $false
+  }
+}
+if (-not $venvOk) {
+  # uv fetches the private Python. Everything stays inside the app's folder, and
+  # the user's PATH and any Python they already have are left alone.
+  $env:UV_UNMANAGED_INSTALL = Join-Path $CodeDir "bin"
+  $env:UV_PYTHON_INSTALL_DIR = Join-Path $CodeDir "python"
+  $env:UV_CACHE_DIR = Join-Path $CodeDir ".uv-cache"
+  $uvInstaller = Join-Path $env:TEMP ("wtf_uv_" + [System.Guid]::NewGuid().ToString("N") + ".ps1")
+  try {
+    Invoke-WebRequest -Uri "https://astral.sh/uv/$UvVersion/install.ps1" -OutFile $uvInstaller
+    & (Get-Process -Id $PID).Path -NoProfile -ExecutionPolicy Bypass -File $uvInstaller | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "uv install failed." }
+  } finally {
+    Remove-Item $uvInstaller -Force -ErrorAction SilentlyContinue
+  }
+  if (Test-Path $venvDir) { Remove-Item $venvDir -Recurse -Force }
+  # --seed installs pip, which the app uses to refresh yt-dlp. The request names
+  # x64 because ctranslate2 has no wheel for Windows on ARM, which emulates x64.
+  & (Join-Path $CodeDir "bin\uv.exe") venv --quiet --seed --python "cpython-$PythonVersion-windows-x86_64-none" --managed-python $venvDir
+  if ($LASTEXITCODE -ne 0) { throw "Virtual environment creation failed." }
+}
 & $venvPy -m pip install --quiet --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
-& $venvPy -m pip install --quiet -r (Join-Path $CodeDir "app\requirements.txt")
+& $venvPy -m pip install --quiet --prefer-binary -r (Join-Path $CodeDir "app\requirements.txt")
 if ($LASTEXITCODE -ne 0) { throw "pip install failed." }
 
 Say "Creating the app shortcut ..."

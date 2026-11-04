@@ -23,37 +23,15 @@ Under the hood it wraps three open-source tools:
 Follow the steps for your computer: [Mac](#mac), [Windows](#windows), or
 [Linux](#linux). You only do this once.
 
-The app needs **Python 3.10 or newer**. The Python that ships with macOS is
-3.9, which is too old, so most Macs need step 3.
+You don't need to install Python. The installer downloads its own private copy
+into the app's folder and leaves any Python you already have alone.
 
 ### Mac
 
 **1. Open Terminal.** Press **⌘ Command + Space**, type `Terminal`, and press
 **Return**.
 
-**2. Check whether you already have Python.** Paste this into Terminal and
-press **Return**:
-
-```bash
-python3 --version
-```
-
-- If it prints **Python 3.10** or higher, skip to step 4.
-- If it prints **Python 3.9** or older, an error, or a box pops up asking to install
-  "command line developer tools", go to step 3. Click **Cancel** on the box
-  if one appeared.
-
-**3. Install Python.**
-
-1. Go to [python.org/downloads](https://www.python.org/downloads/).
-2. Click the big yellow **Download Python 3.x.x** button.
-3. Open the file that downloads. Its name ends in `.pkg`.
-4. Click **Continue** on each screen, click **Agree**, then click **Install**.
-   Enter your Mac password when it asks.
-5. When it says the installation was successful, click **Close**.
-6. Quit Terminal with **⌘ Command + Q**, then open it again as in step 1.
-
-**4. Install Node.js if you'll use YouTube links.** YouTube needs Node.js to
+**2. Install Node.js if you'll use YouTube links.** YouTube needs Node.js to
 download its videos. Skip this step if you'll never paste a YouTube link.
 
 1. Go to [nodejs.org/en/download](https://nodejs.org/en/download).
@@ -62,7 +40,7 @@ download its videos. Skip this step if you'll never paste a YouTube link.
    **Agree**, then click **Install**. Enter your Mac password when it asks.
 4. Click **Close**.
 
-**5. Install the app.** Paste this into Terminal and press **Return**:
+**3. Install the app.** Paste this into Terminal and press **Return**:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mkiser/wtf-transcription-factory/main/install.sh | bash
@@ -71,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/mkiser/wtf-transcription-factory/ma
 The first install takes a few minutes. When it finishes, a new Terminal
 window opens and the app opens in your browser.
 
-**6. Next time, double-click “WTF Transcription Factory” on your Desktop.**
+**4. Next time, double-click “WTF Transcription Factory” on your Desktop.**
 Keep the Terminal window it opens while you use the app. Close that window
 to stop the app.
 
@@ -82,39 +60,7 @@ to stop the app.
 up, [install PowerShell](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell-on-windows?view=powershell-7.6)
 first, then open it.
 
-**2. Check whether you already have Python.** Paste this into PowerShell and
-press **Enter**:
-
-```powershell
-python --version
-```
-
-- If it prints **Python 3.10** or higher, skip to step 5.
-- If it prints anything else, such as *"Python was not found"*, or the
-  Microsoft Store opens, go to step 3. Close the Store if it opened.
-
-**3. Install Python.**
-
-1. Go to [python.org/downloads](https://www.python.org/downloads/).
-2. Under the big yellow **Download Python install manager** button, click the
-   small link that says **Or get the standalone installer for Python 3.x.x**.
-   Don't use the yellow button: the install manager works differently, and
-   the steps below won't match it.
-3. Open the file that downloads.
-4. Before clicking anything else, check the box at the bottom that says
-   **Add python.exe to PATH**. This is the most important step — the install
-   will fail without it.
-5. Click **Install Now** and wait for it to finish. Then click **Close**.
-
-**4. Turn off two Windows settings that get in the way.** Windows has two
-shortcuts named `python` that open the Microsoft Store instead of the Python
-you installed.
-
-1. Click **Start**, type `App execution aliases`, and press **Enter**.
-2. Find **python.exe** and **python3.exe** in the list.
-3. Switch both of them **Off**.
-
-**5. Install Node.js if you'll use YouTube links.** YouTube needs Node.js to
+**2. Install Node.js if you'll use YouTube links.** YouTube needs Node.js to
 download its videos. Skip this step if you'll never paste a YouTube link.
 
 1. Go to [nodejs.org/en/download](https://nodejs.org/en/download).
@@ -124,10 +70,10 @@ download its videos. Skip this step if you'll never paste a YouTube link.
 4. Click **Install**. If Windows asks whether to allow changes, click **Yes**.
 5. Click **Finish**.
 
-**6. Restart PowerShell.** Close the PowerShell window completely, then open
-a new one as in step 1. The new window finds the Python you installed.
+**3. Restart PowerShell if you installed Node.js.** Close the PowerShell window
+completely, then open a new one as in step 1. The new window finds Node.js.
 
-**7. Install the app.** Paste this into PowerShell and press **Enter**:
+**4. Install the app.** Paste this into PowerShell and press **Enter**:
 
 ```powershell
 irm https://raw.githubusercontent.com/mkiser/wtf-transcription-factory/main/install.ps1 | iex
@@ -136,16 +82,14 @@ irm https://raw.githubusercontent.com/mkiser/wtf-transcription-factory/main/inst
 The first install takes a few minutes. When it finishes, a small window
 opens and the app opens in your browser.
 
-**8. Next time, open “WTF Transcription Factory” from the Start menu or your
+**5. Next time, open “WTF Transcription Factory” from the Start menu or your
 Desktop.** Keep the small window open while you use the app. Close it to
 stop the app.
 
 ### Linux
 
-Open a terminal and run the command from Mac step 5. You need Python 3.10 or
-newer with its `venv` module (on Debian and Ubuntu: `sudo apt install
-python3-venv`). The installer starts the app and prints the command to start it again.
-Linux gets no launcher.
+Open a terminal and run the command from Mac step 3. The installer starts the
+app and prints the command to start it again. Linux gets no launcher.
 
 **No security warnings:** the launcher is built on your own
 machine, so it's never quarantined, and a script piped into `bash`/`iex`
@@ -195,8 +139,8 @@ supports, so the app quietly refreshes it in the background at most once a day.
 If you're offline it keeps the copy it has and tries again next time. The other
 components are left alone so a working install doesn't change under you.
 
-**Update** the app itself by re-running the install command (Mac step 5,
-Windows step 7). **Uninstall:** delete the app
+**Update** the app itself by re-running the install command (Mac step 3,
+Windows step 4). **Uninstall:** delete the app
 shortcuts and the app folder (`~/.wtf-transcription-factory` on macOS/Linux, or
 `%LOCALAPPDATA%\WTF Transcription Factory` on Windows).
 

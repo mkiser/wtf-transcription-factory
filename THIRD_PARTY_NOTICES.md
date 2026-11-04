@@ -2,12 +2,14 @@
 
 This project is a thin wrapper that stands on the shoulders of excellent
 open-source software. It does **not** bundle these tools in the repository —
-they are installed on first run (via `pip` and, for ffmpeg, downloaded at
-runtime). Each is the property of its respective authors and is governed by its
-own license.
+they are installed on first run (via `uv` and `pip` and, for ffmpeg, downloaded
+at runtime). Each is the property of its respective authors and is governed by
+its own license.
 
 | Tool | Purpose | License |
 |------|---------|---------|
+| [uv](https://github.com/astral-sh/uv) | Fetches the app's private copy of Python | MIT or Apache-2.0 |
+| [Python](https://www.python.org) | Runs the app | PSF-2.0 |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Identify & download the source media | The Unlicense (public domain) |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Speech-to-text engine | MIT |
 | [OpenAI Whisper](https://github.com/openai/whisper) | Speech-recognition models & method | MIT |

@@ -5,8 +5,9 @@
 #  Run this in Terminal:
 #    curl -fsSL https://raw.githubusercontent.com/mkiser/wtf-transcription-factory/main/install.sh | bash
 #
-#  Requires only Python 3. It downloads the app, sets up its own private
-#  environment, and (on macOS) puts a double-click launcher on your Desktop.
+#  You don't need to install anything first. It downloads the app and its own
+#  private copy of Python, sets up its own environment, and (on macOS) puts a
+#  double-click launcher on your Desktop.
 #  Nothing is quarantined by Gatekeeper because it's all built on your machine.
 #
 set -eu
@@ -15,30 +16,15 @@ REPO="mkiser/wtf-transcription-factory"
 BRANCH="main"
 NAME="WTF Transcription Factory"
 CODE_DIR="$HOME/.wtf-transcription-factory"
+UV_VERSION="0.13.4"
+# 3.12 has wheels for every dependency on the most systems. 3.13 and 3.14 lock
+# out older Macs, and onnxruntime has no wheel for 3.15.
+PYTHON_VERSION="3.12"
 
 bold() { printf "\n\033[1m%s\033[0m\n" "$1"; }
 info() { printf "   %s\n" "$1"; }
 
 bold "🎙️  Installing ${NAME}"
-
-PYTHON_OK=1
-if ! command -v python3 >/dev/null 2>&1; then
-  PYTHON_OK=0
-elif [ "$(uname)" = "Darwin" ] && [ "$(command -v python3)" = "/usr/bin/python3" ] && ! xcode-select -p >/dev/null 2>&1; then
-  PYTHON_OK=0
-elif ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
-  PYTHON_OK=0
-fi
-if [ "$PYTHON_OK" -eq 0 ]; then
-  bold "First you need Python 3.10 or newer (it's free and takes ~2 minutes)."
-  if [ "$(uname)" = "Darwin" ]; then
-    open "https://www.python.org/downloads/" >/dev/null 2>&1 || true
-  fi
-  info "1. Install Python from the page that just opened"
-  info "   (or go to https://www.python.org/downloads/)."
-  info "2. Then paste the same install command again."
-  exit 1
-fi
 
 bold "Downloading the latest version…"
 TMP="$(mktemp -d)"
@@ -49,16 +35,24 @@ SRC="${TMP}/wtf-transcription-factory-${BRANCH}"
 mkdir -p "${CODE_DIR}"
 ( cd "${SRC}" && find . -maxdepth 1 -mindepth 1 ! -name '.venv' ! -name 'transcripts' \
     -exec cp -R {} "${CODE_DIR}/" \; )
-rm -rf "${TMP}"
 
 bold "Setting things up (first time takes a few minutes)…"
-if [ -d "${CODE_DIR}/.venv" ] && ! "${CODE_DIR}/.venv/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
-  info "Rebuilding the virtual environment with Python 3.10 or newer."
+# An environment on Python 3.10 to 3.14 already works, so an update leaves it in
+# place. Anything else, such as a failed install on 3.15, gets rebuilt.
+if ! "${CODE_DIR}/.venv/bin/python" -c 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,14) else 1)' >/dev/null 2>&1; then
+  # uv fetches the private Python. Everything stays inside the app's folder, and
+  # the user's shell setup and any Python they already have are left alone.
+  export UV_UNMANAGED_INSTALL="${CODE_DIR}/bin"
+  export UV_PYTHON_INSTALL_DIR="${CODE_DIR}/python"
+  export UV_CACHE_DIR="${CODE_DIR}/.uv-cache"
+  curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "${TMP}/uv-install.sh"
+  sh "${TMP}/uv-install.sh" >/dev/null
   rm -rf "${CODE_DIR}/.venv"
+  # --seed installs pip, which the app uses to refresh yt-dlp.
+  "${CODE_DIR}/bin/uv" venv --quiet --seed --python "${PYTHON_VERSION}" --managed-python "${CODE_DIR}/.venv"
 fi
-[ -d "${CODE_DIR}/.venv" ] || python3 -m venv "${CODE_DIR}/.venv"
 "${CODE_DIR}/.venv/bin/python" -m pip install --quiet --upgrade pip
-"${CODE_DIR}/.venv/bin/python" -m pip install --quiet -r "${CODE_DIR}/app/requirements.txt"
+"${CODE_DIR}/.venv/bin/python" -m pip install --quiet --prefer-binary -r "${CODE_DIR}/app/requirements.txt"
 
 LAUNCHER=""
 if [ "$(uname)" = "Darwin" ]; then
